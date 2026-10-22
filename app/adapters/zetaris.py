@@ -9,7 +9,7 @@ Settings come from the repo's .env (never overrides variables already set):
     ZETARIS_USERNAME / ZETARIS_PASSWORD
     ZETARIS_ENGINE_ID        optional
     ZETARIS_QUERY_LIMIT      max rows (default 1000)
-    ZETARIS_TIMEOUT_SECONDS  per-request timeout (default 30)
+    ZETARIS_TIMEOUT_SECONDS  per-request timeout (default 60)
     SAMPLE_MODE              "true" runs the SQL with DuckDB against local Parquet
 
 Sample mode: each data/sample/<SCHEMA>/<table>.parquet is exposed as the view
@@ -219,7 +219,7 @@ def _get_token(base_url: str, timeout: int) -> str:
 def _run_live(sql: str, limit: int) -> Any:
     base_url = _base_url()
     org_id = _org_id()
-    timeout = _positive_int("ZETARIS_TIMEOUT_SECONDS", 30)
+    timeout = _positive_int("ZETARIS_TIMEOUT_SECONDS", 60)
     token = _get_token(base_url, timeout)
 
     body: dict[str, object] = {"sql": sql, "limit": limit}
