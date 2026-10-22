@@ -219,6 +219,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Full-size nflverse data (upload to Zetaris; only data/sample/ is committed)
+data/full/
+
 # Secrets and local config
 .env.*
 !.env.example

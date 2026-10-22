@@ -6,10 +6,14 @@ Agents: Planner, Analyst, Critic. Python 3.10+.
 Track: 2 — The Agent That Can Explain Why.
 User: fantasy football managers making waiver and lineup decisions.
 Example questions:
-- "Mike Evans is out. Who becomes the Bucs' WR1, and should I pick him up?"
+- "Mike Evans is out. Who becomes the 49ers' WR1, and should I pick him up?"
 - "Why is Christian Watson scoring so many fantasy points this season?"
 Answers must give a verdict or recommendation with the numbers behind each
 claim, and the Critic must test whether the explanation's timing holds up.
+If a question contains a wrong premise (e.g. wrong team), the agent must
+correct it using the data before answering. Keep "Who becomes the Bucs' WR1
+if Evans is out?" as a sample input that tests this.
+Round numbers to 1 decimal place before quoting them.
 
 ## Architecture rules
 - Agents live in app/agents/. Each has its own system prompt and tools.

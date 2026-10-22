@@ -10,10 +10,15 @@ Settings come from the repo's .env (never overrides variables already set):
     ZETARIS_ENGINE_ID        optional
     ZETARIS_QUERY_LIMIT      max rows (default 1000)
     ZETARIS_TIMEOUT_SECONDS  per-request timeout (default 30)
-    SAMPLE_MODE              "true" reads cached results from data/sample/zetaris/
+    SAMPLE_MODE              "true" runs the SQL with DuckDB against local Parquet
 
-Fallback: if a live query fails, run_sql() returns the cached sample result
-for the same SQL when one exists, otherwise raises ZetarisError.
+Sample mode: each data/sample/<SCHEMA>/<table>.parquet is exposed as the view
+<SCHEMA>.<table> (e.g. NFLVERSE.player_stats), so the same SQL runs in both
+modes. Results use the live response shape, with values as strings.
+
+Fallback: if a live query fails, run_sql() returns the cached result for the
+exact same SQL from data/sample/zetaris_cache/ when one exists, otherwise
+raises ZetarisError.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,7 +36,8 @@ from urllib.request import Request, urlopen
 
 from app.config import REPO_ROOT, load_env
 
-SAMPLE_DIR = REPO_ROOT / "data" / "sample" / "zetaris"
+SAMPLE_DIR = REPO_ROOT / "data" / "sample"
+CACHE_DIR = SAMPLE_DIR / "zetaris_cache"
 RUN_QUERY_PATH = "/api/proxy/sql-editor/sqls/run-query"
 
 
@@ -41,6 +48,7 @@ class ZetarisError(RuntimeError):
 load_env()
 
 _token: str | None = None
+_duckdb: Any = None
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -89,17 +97,69 @@ def _single_statement(sql: str) -> str:
     return sql
 
 
-def _sample_path(sql: str) -> Path:
+def _cache_path(sql: str) -> Path:
     normalized = " ".join(sql.split()).lower()
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-    return SAMPLE_DIR / f"{digest}.json"
+    return CACHE_DIR / f"{digest}.json"
 
 
-def _read_sample(sql: str) -> Any:
-    path = _sample_path(sql)
+def _read_cache(sql: str) -> Any:
+    path = _cache_path(sql)
     if not path.is_file():
-        raise ZetarisError(f"No cached sample for this query ({path.name}).")
+        raise ZetarisError(f"No cached result for this query ({path.name}).")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _identifier(name: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ZetarisError(f"Invalid sample table or schema name: {name!r}")
+    return name
+
+
+def _sample_connection() -> Any:
+    """Open one in-memory DuckDB with a view per sample Parquet file."""
+    global _duckdb
+    if _duckdb is None:
+        import duckdb
+
+        connection = duckdb.connect(":memory:")
+        for path in sorted(SAMPLE_DIR.glob("*/*.parquet")):
+            schema = _identifier(path.parent.name)
+            table = _identifier(path.stem)
+            source = path.as_posix().replace("'", "''")
+            connection.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            connection.execute(
+                f"CREATE VIEW {schema}.{table} AS SELECT * FROM read_parquet('{source}')"
+            )
+        _duckdb = connection
+    return _duckdb
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _run_sample(sql: str, limit: int) -> dict[str, Any]:
+    if not re.match(r"(?is)\s*(select|with)\b", sql):
+        raise ZetarisError("Sample mode only supports SELECT and WITH queries.")
+    import duckdb
+
+    started = time.perf_counter()
+    try:
+        cursor = _sample_connection().execute(sql)
+        rows = cursor.fetchmany(limit)
+    except duckdb.Error as error:
+        raise ZetarisError(f"Sample query failed: {error}") from error
+    return {
+        "headers": [column[0] for column in cursor.description],
+        "data": [[_as_text(value) for value in row] for row in rows],
+        "total": len(rows),
+        "timeUsed": round((time.perf_counter() - started) * 1000),
+    }
 
 
 def _unreachable(base_url: str, error: BaseException) -> ZetarisError:
@@ -194,12 +254,12 @@ def run_sql(sql: str, limit: int | None = None) -> Any:
         limit = _positive_int("ZETARIS_QUERY_LIMIT", 1000)
 
     if _sample_mode():
-        return _read_sample(sql)
+        return _run_sample(sql, limit)
 
     try:
         return _run_live(sql, limit)
     except ZetarisError as live_error:
         try:
-            return _read_sample(sql)
+            return _read_cache(sql)
         except ZetarisError:
             raise live_error from None
