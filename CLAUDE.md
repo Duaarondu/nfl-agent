@@ -3,7 +3,13 @@
 ## What this is
 Multi-agent assistant answering NFL questions from nflverse data.
 Agents: Planner, Analyst, Critic. Python 3.10+.
-Track and target user: not decided yet.
+Track: 2 — The Agent That Can Explain Why.
+User: fantasy football managers making waiver and lineup decisions.
+Example questions:
+- "Mike Evans is out. Who becomes the Bucs' WR1, and should I pick him up?"
+- "Why is Christian Watson scoring so many fantasy points this season?"
+Answers must give a verdict or recommendation with the numbers behind each
+claim, and the Critic must test whether the explanation's timing holds up.
 
 ## Architecture rules
 - Agents live in app/agents/. Each has its own system prompt and tools.
@@ -27,6 +33,10 @@ Track and target user: not decided yet.
   data/sample/.
 - Credit nflverse (CC-BY 4.0) and FTN charting data (CC-BY-SA 4.0,
   "FTN Data via nflverse") in the README.
+- Tables needed: player_stats (has fantasy points), pbp, snap_counts,
+  depth_charts, injuries, rosters, schedules.
+- Every answer includes a short disclaimer: informational only, not
+  betting advice.
 
 ## Secrets
 - Settings come from .env (gitignored). .env.example has placeholders only.
