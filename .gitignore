@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Secrets and local config
+.env.*
+!.env.example
+CLAUDE.local.md
+*.pem
+*.key
+secrets/
