@@ -48,6 +48,14 @@ def test_values_formatted_like_live(sample_dir):
     assert result["data"] == [["1.5", "true"], ["2.0", "true"], [None, "false"]]
 
 
+def test_dates_and_timestamps_formatted_like_live(sample_dir):
+    result = run_sql(
+        "SELECT TIMESTAMP '2026-03-22 07:35:35' AS a, "
+        "TIMESTAMP '2026-03-22 07:35:35.120' AS b, DATE '2026-09-13' AS c"
+    )
+    assert result["data"] == [["2026-03-22 07:35:35.0", "2026-03-22 07:35:35.12", "2026-09-13"]]
+
+
 def test_names_are_case_insensitive(sample_dir):
     result = run_sql("select count(*) from nflverse.PLAYER_STATS")
     assert result["data"] == [["3"]]

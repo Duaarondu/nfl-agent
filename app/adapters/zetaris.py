@@ -29,6 +29,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -136,10 +137,15 @@ def _sample_connection() -> Any:
 
 
 def _as_text(value: Any) -> str | None:
+    """Format a DuckDB value as live Zetaris does (dates are already identical)."""
     if value is None:
         return None
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, datetime):
+        # Java Timestamp style: fractional seconds without trailing zeros, at least ".0".
+        fraction = f"{value.microsecond:06d}".rstrip("0") or "0"
+        return f"{value:%Y-%m-%d %H:%M:%S}.{fraction}"
     return str(value)
 
 
