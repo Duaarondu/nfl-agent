@@ -229,3 +229,9 @@ CLAUDE.local.md
 *.pem
 *.key
 secrets/
+
+# Agent trace logs (real runs worth keeping go in examples/)
+logs/
+
+# Local diagnostics (not app code)
+scripts/diag_nvidia_direct.py

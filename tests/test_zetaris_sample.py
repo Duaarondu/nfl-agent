@@ -1,35 +1,9 @@
 import json
 
-import duckdb
 import pytest
 
 from app.adapters import zetaris
 from app.adapters.zetaris import ZetarisError, run_sql
-
-
-@pytest.fixture
-def sample_dir(tmp_path, monkeypatch):
-    schema_dir = tmp_path / "NFLVERSE"
-    schema_dir.mkdir()
-    target = (schema_dir / "player_stats.parquet").as_posix()
-    duckdb.sql(
-        f"""
-        COPY (
-            SELECT * FROM (VALUES
-                ('00-0031408', 'M.Evans', 'TB', 1, 9, 1.5, true),
-                ('00-0031408', 'M.Evans', 'TB', 2, 7, NULL, false),
-                ('00-0036900', 'J.Chase', 'CIN', 1, 12, 2.0, true)
-            ) AS t(player_id, player_name, team, week, targets, epa, active)
-        ) TO '{target}' (FORMAT parquet)
-        """
-    )
-    monkeypatch.setattr(zetaris, "SAMPLE_DIR", tmp_path)
-    monkeypatch.setattr(zetaris, "CACHE_DIR", tmp_path / "zetaris_cache")
-    monkeypatch.setattr(zetaris, "_duckdb", None)
-    monkeypatch.setenv("SAMPLE_MODE", "true")
-    yield tmp_path
-    if zetaris._duckdb is not None:
-        zetaris._duckdb.close()
 
 
 def test_two_part_name_returns_live_shape(sample_dir):
