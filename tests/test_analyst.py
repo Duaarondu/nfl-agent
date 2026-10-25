@@ -161,6 +161,7 @@ def test_slow_factor_agent_is_cut_off_at_the_window(real_sample, model, monkeypa
         return rating("strong")
 
     monkeypatch.setattr(analyst, "FACTOR_WINDOW", 2)
+    monkeypatch.setattr(analyst, "MIN_FACTOR_WINDOW", 2)
     script(model, classify("Christian Watson", "why"), factors={"Teammate absences": slow})
     started = time.perf_counter()
     result = analyze(WATSON_WHY)
@@ -352,3 +353,36 @@ def test_agents_get_the_corrected_question_and_result_keeps_the_original(real_sa
     for call in calls_for(model, analyst.FACTOR_PROMPT) + calls_for(model, analyst.VERDICT_PROMPT):
         assert "Question: Who becomes the 49ers' WR1 if Mike Evans is out?" in call[1]["content"]
     assert result.question == BUCS
+
+
+@pytest.mark.parametrize("left, window", [
+    (150, 85),  # fast queries: the usual cap
+    (120, 75),  # what is left after the verdict's reserve
+    (61, 60),   # slow queries (run 1f70a86c1057 had 16s): still the guaranteed minimum
+    (-30, 60),  # queries ran past the whole budget
+])
+def test_factor_window_has_a_guaranteed_minimum(left, window):
+    assert analyst._factor_window(left) == window
+
+
+def test_slow_queries_still_leave_the_factor_agents_their_minimum(real_sample, model, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(analyst.time, "perf_counter", lambda: clock[0])
+    real_plan = analyst._run_plan
+
+    def slow_plan(*args, **kwargs):
+        plan = real_plan(*args, **kwargs)
+        clock[0] += 140  # the live queries took 140s of the 150s budget
+        return plan
+
+    windows, deadlines = [], []
+    real_rate, real_verdict = analyst._rate_factors, analyst._verdict
+    monkeypatch.setattr(analyst, "_run_plan", slow_plan)
+    monkeypatch.setattr(analyst, "_rate_factors",
+                        lambda *a, window, **k: windows.append(window) or real_rate(*a, window=window, **k))
+    monkeypatch.setattr(analyst, "_verdict",
+                        lambda *a, deadline, **k: deadlines.append(deadline) or real_verdict(*a, deadline=deadline, **k))
+    script(model, classify("Christian Watson", "why"))
+    analyze(WATSON_WHY)
+    assert windows == [analyst.MIN_FACTOR_WINDOW]
+    assert deadlines[0] - clock[0] >= analyst.VERDICT_RESERVE  # the verdict keeps its reserve too

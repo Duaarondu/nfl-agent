@@ -45,13 +45,17 @@ MODEL_PARAMS = {"temperature": 0.2, "chat_template_kwargs": {"enable_thinking": 
 FACTOR_MAX_TOKENS = 4096
 VERDICT_MAX_TOKENS = 4096
 REVISE_MAX_TOKENS = 8192  # a revision's prompt is longer, and the model thinks through it
-# Time limits (seconds). Each model request times out on its own; the factor agents
-# share one window, and whatever is left of the total goes to the verdict call.
+# Time limits (seconds). Each model request times out on its own. After the queries
+# finish, the factor agents share one window: what is left of TOTAL_BUDGET minus the
+# verdict's reserve, capped at FACTOR_WINDOW, but never under MIN_FACTOR_WINDOW, so
+# slow live queries no longer squeeze it (16s in run 1f70a86c1057). The verdict call
+# then gets what is left of TOTAL_BUDGET, but never under VERDICT_RESERVE.
 CALL_TIMEOUT = 60
 CLASSIFY_TIMEOUT = planner.TIMEOUT
 REVISE_TIMEOUT = 90  # the critic's revision call; the run budget (pipeline.RUN_BUDGET) still caps it
 TOTAL_BUDGET = 150
 FACTOR_WINDOW = 85
+MIN_FACTOR_WINDOW = 60
 VERDICT_RESERVE = 45
 MIN_RETRY_SECONDS = 20  # a repair retry needs at least this long to be worth starting
 SUPPORT_LEVELS = ("strong", "moderate", "weak", "not supported")
@@ -276,11 +280,11 @@ def analyze(
             "Name the player in full."
         )
 
-    deadline = started + TOTAL_BUDGET
-    window = max(1.0, min(FACTOR_WINDOW, deadline - time.perf_counter() - VERDICT_RESERVE))
+    window = _factor_window(started + TOTAL_BUDGET - time.perf_counter())
     # The agents get the question with its wrong premise already corrected from the data.
     asked = plan.corrected_question(question)
     factors = _rate_factors(run_id, asked, plan, window=window)
+    deadline = max(started + TOTAL_BUDGET, time.perf_counter() + VERDICT_RESERVE)
     facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory)
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
                        memory=memory)
@@ -311,6 +315,11 @@ def result_from_dict(data: dict[str, Any]) -> AnalystResult:
         "asked": data.get("asked") or data["question"],
         "user_context": user_context_from_dict(data.get("user_context")),
     })
+
+
+def _factor_window(left: float) -> float:
+    """The factor agents' shared window, given the seconds left of TOTAL_BUDGET once the queries are done."""
+    return max(MIN_FACTOR_WINDOW, min(FACTOR_WINDOW, left - VERDICT_RESERVE))
 
 
 def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, round: int) -> None:

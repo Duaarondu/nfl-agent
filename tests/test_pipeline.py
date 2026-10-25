@@ -77,7 +77,7 @@ def test_review_and_revise_get_90s_and_8192_tokens(real_sample, model):
     assert (review["timeout"], review["max_tokens"]) == (90, 8192)
     assert (revise["timeout"], revise["max_tokens"]) == (90, 8192)
     assert (verdict["timeout"], verdict["max_tokens"]) == (60, 4096)  # the first verdict is unchanged
-    assert pipeline.RUN_BUDGET == 300
+    assert pipeline.RUN_BUDGET == 360
 
 
 def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, trace_dir):

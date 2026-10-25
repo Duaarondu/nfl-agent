@@ -23,7 +23,7 @@ from app.agents.analyst import AnalystResult
 from app.agents.critic import Critique
 from app.trace import new_run_id, trace
 
-RUN_BUDGET = 300
+RUN_BUDGET = 360  # the Analyst can now run past its 150s when live queries are slow
 MAX_ROUNDS = 3
 REVISE_RESERVE = 45  # kept back from a review that may be followed by a revision
 
