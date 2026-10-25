@@ -205,7 +205,7 @@ def test_replacement_question_rates_usage_depth_and_games_without(real_sample, m
     ]
     assert sorted(f.factor for f in result.factors) == ["Depth chart", "Games without the player", "Team usage"]
     depth_call = next(c for c in calls_for(model, analyst.FACTOR_PROMPT) if "Factor: Depth chart" in c[1]["content"])
-    assert "1. Mike Evans, 2. Deebo Samuel" in depth_call[1]["content"]
+    assert "WR depth chart: 1. Mike Evans (WR1), 2. Deebo Samuel (WR2)" in depth_call[1]["content"]
     without = next(c for c in calls_for(model, analyst.FACTOR_PROMPT) if "Factor: Games without" in c[1]["content"])
     assert "He played every team game this season" in without[1]["content"]
     assert result.answer == "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: pick up Deebo Samuel. Deebo Samuel becomes the WR1 by depth chart."
@@ -477,3 +477,81 @@ def test_compare_with_one_player_found_falls_back_to_start_sit(real_sample, mode
     result = analyze("Should I start George Pickens or Nobody Atall?")
     assert result.question_type == "start_sit"
     assert result.player.name == "George Pickens"
+
+
+# --- last names, clarification, position labels, the matchup ---
+
+UI_QUESTION = "Who should I start Trey Mcbride or Bowers for week 7"
+
+
+def script_ui(model, route=None, factor_reply=None):
+    """The Planner says start_sit about McBride (as it did live); agents rate; verdict picks Bowers."""
+    def respond(messages):
+        system = messages[0]["content"]
+        if system == analyst.CLASSIFY_PROMPT:
+            return route or classify("Trey McBride", "start_sit")
+        if system in (analyst.FACTOR_PROMPT, analyst.COMPARE_FACTOR_PROMPT):
+            reply = factor_reply(messages) if factor_reply else None
+            return reply or json.dumps({"favours": "Brock Bowers", "support": "moderate", "summary": "Facts."})
+        return verdict("Start Brock Bowers over Trey McBride",
+                       "Bowers scores 20.6 PPR points per game to McBride's 17.2.")
+    model.respond = respond
+
+
+def test_last_name_is_looked_up_and_the_choice_becomes_a_compare(real_sample, model, trace_dir):
+    script_ui(model)
+    result = analyze(UI_QUESTION)
+    assert result.question_type == "compare"
+    assert [p.name for p in result.players] == ["Trey McBride", "Brock Bowers"]
+    assert [q.factor for q in result.queries][:2] == ["Player lookup", "Last-name lookup"]
+    assert result.name_note == "Bowers = Brock Bowers, LV TE."
+    assert result.answer.startswith("Start Brock Bowers over Trey McBride. Bowers = Brock Bowers, LV TE. Bowers")
+    matchup = next(q for q in result.queries if q.factor == "Next matchup")
+    assert "week 7 opponent" in matchup.purpose  # the week the question names
+    lines = read_trace(trace_dir)
+    [names] = [l for l in lines if l["action"] == "last_names"]
+    assert names["resolved"] == {"Bowers": "Brock Bowers"}
+    assert any(l["action"] == "compare" and l["from_type"] == "start_sit" for l in lines)
+
+
+def test_last_name_reaches_the_factor_agents_and_the_verdict(real_sample, model):
+    script_ui(model)
+    analyze(UI_QUESTION)
+    factor = calls_for(model, analyst.COMPARE_FACTOR_PROMPT)[0][1]["content"]
+    assert "Named by last name: Bowers = Brock Bowers, LV TE." in factor
+    [verdict_call] = calls_for(model, analyst.VERDICT_PROMPT)
+    assert "Named by last name (from the rosters): Bowers = Brock Bowers, LV TE." in verdict_call[1]["content"]
+
+
+@pytest.mark.parametrize("question, says", [
+    ("Should I start Trey McBride or Zzyzx?", 'couldn\'t find a skill player called "Zzyzx"'),
+    ("Who should I start, Qqq or Zzyzx?", '"Qqq"'),
+])
+def test_unknown_last_name_asks_which_player(real_sample, model, trace_dir, question, says):
+    script_ui(model, route=classify(None, "start_sit"))
+    with pytest.raises(analyst.NeedsClarification) as error:
+        analyze(question)
+    assert says in str(error.value) and str(error.value).endswith("Which player do you mean? Please give their full name.")
+    assert not calls_for(model, analyst.VERDICT_PROMPT)  # no winner picked
+    assert [l["action"] for l in read_trace(trace_dir) if l["action"] == "clarify"] == ["clarify"]
+
+
+def test_wrong_position_label_in_a_factor_summary_is_retried_then_ruled(real_sample, model, trace_dir):
+    bad = json.dumps({"favours": "Trey McBride", "support": "strong",
+                      "summary": "Trey McBride is the Cardinals' WR1 with a 29.7% target share."})
+    script_ui(model, factor_reply=lambda m: bad if "Factor: Team usage share" in m[1]["content"] else None)
+    result = analyze(UI_QUESTION)
+    usage = next(f for f in result.factors if f.factor == "Team usage share")
+    assert usage.rated_by == "rule-based" and "WR1" not in usage.summary
+    retries = [c for c in calls_for(model, analyst.COMPARE_FACTOR_PROMPT) if "Factor: Team usage share" in c[1]["content"]]
+    assert len(retries) == 2 and "'WR1' is wrong for Trey McBride, who is a TE" in retries[1][-1]["content"]
+
+
+def test_start_sit_rates_the_matchup_for_the_named_week(real_sample, model):
+    script(model, classify("Trey McBride", "start_sit"), answer=verdict("Start Trey McBride", "He averages 17.2."))
+    result = analyze("Should I start Trey McBride in week 7?")
+    assert [q.factor for q in result.queries][-1] == "Next matchup"
+    assert any(f.factor == "Next matchup" for f in result.factors)
+    facts = calls_for(model, analyst.FACTOR_PROMPT)
+    [m] = [c for c in facts if "Factor: Next matchup" in c[1]["content"]]
+    assert "Trey McBride (ARI) plays DEN in week 7" in m[1]["content"]

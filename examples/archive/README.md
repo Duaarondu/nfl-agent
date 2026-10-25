@@ -16,3 +16,7 @@ vs rule-based (runs from before that header was added do not).
   replacement routing for "if <player> misses time" and critic check (d)'s out-player rule.
   It and the Bucs and league-memory runs from the same batch (ddb115ab07ae, 03f78201f109)
   predate the "<depth chart pick> is next ..., so for fantasy: ..." answer shape.
+- `start-mcbride-or-brock-bowers/20261025-193926-9fff19ee315b` is the second run of the
+  McBride/Bowers rerun (full name for Bowers). It reached the same verdict in 79.2s, but
+  two factor summaries had numbers the Critic could not find in the rows (3.4, 0.4), so
+  the run of the question as written is the one kept.

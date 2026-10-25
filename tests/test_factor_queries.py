@@ -124,8 +124,10 @@ def test_rule_verdict_never_picks_up_the_player_who_is_out(real_sample):
 
 def test_plan_picks_bundle_by_question_type():
     assert [p.factor for p in fq.plan("why", WATSON, SEASON, WEEK)][1] == "Opportunity"
-    for qt in ("start_sit", "waiver", "other"):
-        assert [p.factor for p in fq.plan(qt, WATSON, SEASON, WEEK)] == ["Status", "Team usage", "Depth chart"]
+    assert [p.factor for p in fq.plan("other", WATSON, SEASON, WEEK)] == ["Status", "Team usage", "Depth chart"]
+    for qt in ("start_sit", "waiver"):  # plus the matchup
+        assert [p.factor for p in fq.plan(qt, WATSON, SEASON, WEEK)] == [
+            "Status", "Team usage", "Depth chart", "Next matchup"]
     assert [p.factor for p in fq.plan("replacement", WATSON, SEASON, WEEK)] == [
         "Status", "Team usage", "Depth chart", "Games without the player",
     ]
@@ -337,3 +339,147 @@ def test_compare_rule_verdict_uses_league_scoring_then_trend(real_sample):
         row[col] = 10.0
     verdict, why = fq.rule_verdict("compare", players[0], results, [], players=players)
     assert verdict == "Start Jameson Williams over George Pickens" and "Decided by recent trend." in why
+
+
+# --- last names, the week in the question, the matchup, position labels ---
+
+MCBRIDE = fq.Player("00-0037744", "Trey McBride", "ARI", "TE", "ACT", 7)
+UI_QUESTION = "Who should I start Trey Mcbride or Bowers for week 7"
+
+
+@pytest.mark.parametrize("question, found, words", [
+    (UI_QUESTION, [MCBRIDE], ["Bowers"]),
+    ("Start McBride or Brock Bowers?", [], ["McBride"]),  # "Brock Bowers" is a full name, not a last name
+    ("Should I start Watson or Kittle this week?", [], ["Watson", "Kittle"]),
+    ("Should I start the Bucs WR or bowers?", [], ["bowers"]),  # lowercase, next to "or"
+    ("Should I start George Pickens or Nobody Atall?", [], []),  # an unknown full name
+    ("Who should I start in week 7?", [], []),
+])
+def test_last_name_words(question, found, words):
+    assert fq.last_name_words(question, found) == words
+
+
+def test_compare_question_counts_last_names_that_resolved():
+    assert not fq.is_compare_question(UI_QUESTION)
+    assert fq.is_compare_question(UI_QUESTION, ["Bowers"])
+    assert not fq.is_compare_question("Should I start Trey McBride this week?", ["Bowers"])  # no choice cue
+
+
+@pytest.mark.parametrize("question, week", [
+    (UI_QUESTION, 7), ("Start McBride in Week 12?", 12), ("Start McBride this week?", None), ("week 40", None),
+])
+def test_question_week(question, week):
+    assert fq.question_week(question) == week
+
+
+def last_names(words, others=()):
+    result = run_sql(fq.last_name_lookup_sql(words, SEASON))
+    return fq.resolve_last_names(words, result["headers"], result["data"], list(others))
+
+
+def test_one_match_resolves_and_says_so(real_sample):
+    [bowers] = last_names(["Bowers"], [MCBRIDE])
+    assert bowers.player.name == "Brock Bowers" and bowers.note() == "Bowers = Brock Bowers, LV TE."
+
+
+def test_shared_last_name_prefers_the_other_players_position_then_points(real_sample):
+    [johnson] = last_names(["Johnson"], [MCBRIDE])  # a TE: Juwan (65.8 PPR) over Theo (15.5)
+    assert johnson.player.name == "Juwan Johnson" and "same position as Trey McBride" in johnson.rule
+    [johnson] = last_names(["Johnson"])  # no other player: the most points of all 14
+    assert johnson.player.name == "Juwan Johnson" and len(johnson.options) >= 10
+
+
+def test_unknown_or_tied_last_names_do_not_guess(real_sample):
+    [nobody] = last_names(["Zzyzx"])
+    assert nobody.player is None and not nobody.options
+    headers = ["gsis_id", "full_name", "team", "position", "status", "week", "season_ppr_points"]
+    rows = [["a", "Al Smith", "NYJ", "WR", "ACT", 7, 50.0], ["b", "Bo Smith", "DAL", "WR", "ACT", 7, 50.0]]
+    [smith] = fq.resolve_last_names(["Smith"], headers, rows, [])
+    assert smith.player is None and [p.name for p, _ in smith.options] == ["Al Smith", "Bo Smith"]
+    message = fq.clarify_message([nobody, smith])
+    assert 'couldn\'t find a skill player called "Zzyzx"' in message
+    assert '"Smith" could be 2 players: Al Smith (NYJ, WR); Bo Smith (DAL, WR).' in message
+    assert message.endswith("Which player do you mean? Please give their full name.")
+
+
+def matchup(players, week=None, scoring=fq.PPR):
+    q = fq.matchup_query(players, SEASON, WEEK, scoring, week)
+    result = run_sql(q.sql)
+    return q, (result["headers"], result["data"])
+
+
+def test_matchup_next_game_and_named_week_match_the_schedule(real_sample):
+    _, rows = matchup([MCBRIDE])
+    [line] = fq.summarize("Next matchup", *rows)
+    assert line.startswith("Trey McBride (ARI) plays DEN in week 7: DEN allow ") and "to TEs (rank " in line
+    assert "of 32, 1 = most allowed; from 6 games so far)." in line
+    q, rows = matchup([MCBRIDE], week=6)  # LA 16, ARI 18: already played
+    assert "week 6 opponent" in q.purpose
+    assert fq.summarize("Next matchup", *rows)[0].startswith(
+        "Trey McBride (ARI) already played LA in week 6 (that game is in the data): LA allow ")
+
+
+def test_matchup_on_bye(real_sample):
+    [cook] = lookup("James Cook")  # BUF: bye in week 7
+    _, rows = matchup([cook], week=7)
+    assert fq.summarize("Next matchup", *rows) == ["James Cook (BUF) is on bye in week 7."]
+    results = {"Next matchup": rows}
+    assert fq.rule_rating("Next matchup", results) == ("not supported", "on bye in week 7")
+    usage = fq.team_bundle(cook, SEASON, WEEK)[1]
+    result = run_sql(usage.sql)
+    results["Team usage"] = (result["headers"], result["data"])
+    verdict, why = fq.rule_verdict("start_sit", cook, results, [])
+    assert verdict == "Sit James Cook" and "he is on bye in week 7" in why
+
+
+def test_matchup_in_league_scoring_and_rated_by_rank(real_sample):
+    _, rows = matchup([MCBRIDE], scoring=fq.SCORINGS["half"])
+    assert "half-PPR points per game to TEs" in fq.summarize("Next matchup", *rows)[0]
+    support, rule = fq.rule_rating("Next matchup", {"Next matchup": rows})
+    rank = int(rows[1][0][rows[0].index("allowed_rank")])
+    expected = "strong" if rank <= 8 else "moderate" if rank <= 16 else "weak" if rank <= 24 else "not supported"
+    assert support == expected and f"DEN rank {rank} of 32" in rule and "strong 1-8, moderate 9-16, weak 17-24" in rule
+
+
+def test_start_sit_and_waiver_plan_the_named_week(real_sample):
+    for qt in ("start_sit", "waiver"):
+        q = fq.plan(qt, MCBRIDE, SEASON, WEEK, week=8)[-1]
+        assert q.factor == "Next matchup" and "week 8 opponent" in q.purpose and "8 AS week" in q.sql
+    assert "next opponent after week 6" in fq.plan("start_sit", MCBRIDE, SEASON, WEEK)[-1].purpose
+
+
+def test_compare_rule_starts_the_player_who_is_not_on_bye(real_sample):
+    [cook] = lookup("James Cook")
+    players = [cook, MCBRIDE]
+    results = {}
+    for p in fq.compare_bundle(players, SEASON, WEEK, fq.PPR, week=7):
+        r = run_sql(p.sql)
+        results[p.factor] = (r["headers"], r["data"])
+    verdict, why = fq.rule_verdict("compare", cook, results, [], players=players)
+    assert verdict == "Start Trey McBride over James Cook" and "James Cook is on bye in week 7" in why
+
+
+def test_depth_chart_summary_labels_the_position():
+    t = (["pos_abb", "pos_rank", "player_name"], [["TE", "1", "Trey McBride"], ["TE", "2", "Elijah Higgins"]])
+    assert fq.summarize("Depth chart", *t) == ["TE depth chart: 1. Trey McBride (TE1), 2. Elijah Higgins (TE2)."]
+
+
+@pytest.mark.parametrize("text, problems", [
+    ("Trey McBride is the Cardinals' WR1.", [("WR1", "Trey McBride", "TE")]),
+    ("WR1 Trey McBride is a lock.", [("WR1", "Trey McBride", "TE")]),
+    ("Trey McBride is the TE1 and Kendrick Bourne the WR1.", []),
+    ("With Mike Evans out, the WR1 role goes to the target leader.", []),
+    ("He has a 24.1% target share (TE) 24 times.", []),
+])
+def test_position_label_problems(text, problems):
+    positions = {"Trey McBride": "TE", "Kendrick Bourne": "WR", "Mike Evans": "WR"}
+    assert [(l, n, p) for _, l, n, p in fq.position_label_problems(text, positions)] == problems
+
+
+def test_known_positions_from_lookup_usage_and_depth_tables():
+    tables = [
+        (["gsis_id", "full_name", "team", "position"], [["1", "Trey McBride", "ARI", "TE"]]),
+        (["player_display_name", "position"], [["Kendrick Bourne", "WR"]]),
+        (["pos_abb", "pos_rank", "player_name"], [["TE", "2", "Elijah Higgins"]]),
+    ]
+    assert fq.known_positions(tables) == {"Trey McBride": "TE", "Kendrick Bourne": "WR", "Elijah Higgins": "TE"}

@@ -76,7 +76,8 @@ data. Reply with only this JSON:
 {"support": "strong" | "moderate" | "weak" | "not supported",
  "summary": "<one sentence with numbers from the facts>"}
 support: how well these facts explain or answer the question. Use only numbers in the
-facts, at most 1 decimal place. If a change matters, say in which week it started."""
+facts, at most 1 decimal place. If a change matters, say in which week it started.
+Use a position label like WR1 or TE1 only with the player's own position from the facts."""
 
 COMPARE_FACTOR_PROMPT = """\
 You compare two players on one factor, for a fantasy football manager choosing which
@@ -85,7 +86,8 @@ one to start, from facts computed from nflverse data. Reply with only this JSON:
  "support": "strong" | "moderate" | "weak" | "not supported",
  "summary": "<one sentence with both players' numbers from the facts>"}
 support: how decisively this factor favours that player ("not supported" when even).
-Use only numbers in the facts, at most 1 decimal place, and write percentages with %."""
+Use only numbers in the facts, at most 1 decimal place, and write percentages with %.
+Use a position label like WR1 or TE1 only with the player's own position from the facts."""
 
 VERDICT_PROMPT = """\
 You write the verdict for a fantasy football manager from factors already rated
@@ -105,7 +107,10 @@ Kittle"), so do not repeat the depth chart in "why".
 In "why", lead with the most supported factors and their numbers; use only numbers
 given, at most 1 decimal place. If a premise check is given, answer the corrected
 question. If a user context is given, quote points in its scoring and never recommend
-picking up a player already on its roster. Do not add a disclaimer."""
+picking up a player already on its roster. Never recommend a player the facts have no
+data for. Never start a player on bye that week; if the game was already played, say so.
+Use a position label like WR1 or TE1 only with the player's own position. Do not add a
+disclaimer."""
 VERDICT_ACTIONS = ("pick up", "add", "start", "sit", "bench", "hold", "drop", "stash")
 DISCLAIMER = "Informational only, based on nflverse data; not betting advice."
 
@@ -185,6 +190,15 @@ class AnalystError(RuntimeError):
     pass
 
 
+class NeedsClarification(AnalystError):
+    """The question names a player by a last name that matches nobody, or several players
+    equally: the reply asks which player is meant instead of guessing."""
+
+    def __init__(self, message: str, options: list[factor_queries.Player] | None = None) -> None:
+        super().__init__(message)
+        self.options = options or []
+
+
 @dataclass
 class Evidence:
     query_id: int
@@ -239,6 +253,7 @@ class AnalystResult:
     asked: str = ""  # the question the agents answered, with any wrong premise corrected
     user_context: UserContext | None = None  # league memory the answer was written for
     players: list[factor_queries.Player] = field(default_factory=list)  # both players of a compare question
+    name_note: str | None = None  # last names resolved from the rosters: "Bowers = Brock Bowers, LV TE."
 
     @property
     def queries_used(self) -> int:
@@ -255,6 +270,12 @@ class Plan:
     queries: list[QueryRecord] = field(default_factory=list)
     wrong_teams: list[str] = field(default_factory=list)
     players: list[factor_queries.Player] = field(default_factory=list)  # compare: both players, question order
+    last_names: list[factor_queries.LastName] = field(default_factory=list)  # resolved from a last name only
+
+    def name_note(self) -> str | None:
+        """ "Bowers = Brock Bowers, LV TE." for each player the question named by last name."""
+        notes = [n.note() for n in self.last_names if n.player]
+        return " ".join(notes) or None
 
     def corrected_question(self, question: str) -> str:
         if not (self.player and self.wrong_teams) or len(self.players) > 1:
@@ -298,7 +319,7 @@ def analyze(
 
     if free_sql:
         return _sql_loop(run_id, question, context, plan)
-    if not plan.queries:
+    if plan.player is None:
         trace(run_id, AGENT_NAME, "answer", "error", reason="no player found")
         raise AnalystError(
             "Could not find the NFL player this question is about in this season's rosters. "
@@ -310,9 +331,10 @@ def analyze(
     asked = plan.corrected_question(question)
     factors = _rate_factors(run_id, asked, plan, window=window)
     deadline = max(started + TOTAL_BUDGET, time.perf_counter() + VERDICT_RESERVE)
-    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory)
+    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory, plan.name_note())
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
-                       memory=memory, out=factor_queries.says_out(question, plan.player.name), players=plan.players)
+                       memory=memory, out=factor_queries.says_out(question, plan.player.name), players=plan.players,
+                       name_note=plan.name_note())
     result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
     result.user_context = memory
     return result
@@ -360,12 +382,13 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
         return
     facts = _verdict_facts(
         result.asked or result.question, result.season_context, result.premise_correction,
-        result.queries, result.factors, result.user_context,
+        result.queries, result.factors, result.user_context, result.name_note,
     )
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
         deadline=deadline, revision=(result.answer, issues), memory=result.user_context,
         out=factor_queries.says_out(result.question, result.player.name), players=result.players,
+        name_note=result.name_note,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -373,9 +396,17 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
 
 
 def _player_line(plan: Plan) -> str:
-    line = _summary(plan.queries[0])
+    line = _lookup_summary(plan.queries)
+    if plan.name_note():
+        line += f" Named by last name: {plan.name_note()}"
     note = plan.premise_note()
     return f"{line} Premise check: {note} Answer for the team in the data." if note else line
+
+
+def _lookup_summary(queries: list[QueryRecord]) -> str:
+    """The players found by full name; when none were, the last-name matches."""
+    lookups = [q for q in queries if q.factor in ("Player lookup", "Last-name lookup") and not q.error and q.rows]
+    return _summary(lookups[0]) if lookups else _summary(queries[0])
 
 
 def _summary(record: QueryRecord) -> str:
@@ -397,12 +428,15 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
     """
     rated = [q for q in plan.queries if q.factor in factor_queries.RATED_FACTORS]
     player_line = _player_line(plan)
+    positions = factor_queries.known_positions([(q.headers, q.rows) for q in plan.queries if not q.error])
+    head_to_head = len(plan.players) >= 2
     replies: dict[int, dict[str, Any] | Exception] = {}
     deadline = time.perf_counter() + window
 
     def work(record: QueryRecord) -> None:
         try:
-            replies[record.query_id] = _factor_agent(run_id, question, player_line, record, deadline, plan.players)
+            replies[record.query_id] = _factor_agent(run_id, question, player_line, record, deadline, plan.players,
+                                                     positions)
         except Exception as error:  # noqa: BLE001 - any failure means the rules take over
             replies[record.query_id] = error
 
@@ -429,7 +463,7 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
         else:
             reason = "query failed" if q.error else (str(reply) if reply else f"no reply within {window:.0f}s")
             favours = None
-            if q.factor in factor_queries.COMPARE_FACTORS:
+            if head_to_head and q.factor in factor_queries.COMPARE_FACTORS:
                 favours, support, rule = factor_queries.compare_rating(q.factor, results)
             else:
                 support, rule = factor_queries.rule_rating(q.factor, results)
@@ -443,7 +477,7 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
 
 def _factor_agent(
     run_id: str, question: str, player_line: str, record: QueryRecord, deadline: float,
-    players: list[factor_queries.Player] | None = None,
+    players: list[factor_queries.Player] | None = None, positions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Rate one factor; for a compare question, head-to-head: which of the two players it favours."""
     facts = "\n".join(f"- {line}" for line in factor_queries.summarize(record.factor or "", record.headers, record.rows))
@@ -454,6 +488,7 @@ def _factor_agent(
         {"role": "user", "content": f"Question: {question}\n{label}: {player_line}\nFactor: {record.factor}\nFacts:\n{facts}"},
     ]
     check = _check_head_to_head([p.name for p in players]) if head_to_head else _check_rating
+    check = _with_position_check(check, positions or {})
     return _ask_json(
         run_id, "factor", messages, FACTOR_MAX_TOKENS, check,
         agent_name=f"factor_agent:{record.factor}", timeout=CALL_TIMEOUT, deadline=deadline,
@@ -475,6 +510,15 @@ def _check_head_to_head(names: list[str]):
     return check
 
 
+def _with_position_check(check, positions: dict[str, str]):
+    """A rating check that also rejects a "WR1"-style label on a player of another position."""
+    def checked(reply: dict[str, Any]) -> None:
+        check(reply)
+        for _, label, name, pos in factor_queries.position_label_problems(str(reply.get("summary", "")), positions):
+            raise ValueError(f"'{label}' is wrong for {name}, who is a {pos}; use {pos} labels for him")
+    return checked
+
+
 def _check_rating(reply: dict[str, Any]) -> None:
     support = str(reply.get("support", "")).strip().lower()
     if support not in SUPPORT_LEVELS:
@@ -488,7 +532,7 @@ def _verdict(
     run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
     revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None, out: bool = False,
-    players: list[factor_queries.Player] | None = None,
+    players: list[factor_queries.Player] | None = None, name_note: str | None = None,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
@@ -511,7 +555,18 @@ def _verdict(
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
               step="revise" if revision else "verdict", reason=str(error)[:300])
     lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
-    return round_numbers(_compose(question_type, verdict, why, note, lead)), by
+    return round_numbers(_with_name_note(_compose(question_type, verdict, why, note, lead), name_note)), by
+
+
+def _with_name_note(answer: str, note: str | None) -> str:
+    """Say which player a last name resolved to, right after the first sentence:
+    "Start Trey McBride over Brock Bowers. Bowers = Brock Bowers, LV TE. ..."."""
+    if not note or note in answer:
+        return answer
+    first = (factor_queries.sentences(answer) or [answer])[0]
+    at = answer.find(first) + len(first)
+    rest = answer[at:].strip()
+    return f"{answer[:at]} {note}" + (f" {rest}" if rest else "")
 
 
 def _compose(question_type: str, verdict: str, why: str, note: str = "", lead: str | None = None) -> str:
@@ -546,15 +601,17 @@ def _check_verdict(reply: dict[str, Any]) -> None:
 
 def _verdict_facts(
     question: str, context: str, premise_note: str | None, queries: list[QueryRecord], factors: list[Factor],
-    memory: UserContext | None = None,
+    memory: UserContext | None = None, name_note: str | None = None,
 ) -> list[str]:
     lines = [context]
     if memory and memory.prompt_block():
         lines.append(memory.prompt_block())
     lines.append(f"Question: {question}")
+    if name_note:
+        lines.append(f"Named by last name (from the rosters): {name_note}")
     if premise_note:
         lines.append(f"Premise check: {premise_note}")
-    lines.append(f"Player: {_summary(queries[0])}")
+    lines.append(f"Player: {_lookup_summary(queries)}")
     status = next((q for q in queries if q.factor == "Status"), None)
     if status:
         lines.append(f"Injury status: {_summary(status)}")
@@ -603,7 +660,7 @@ def _assemble(
     claims = [
         Claim(_summary(q), _evidence(q))
         for q in plan.queries
-        if q.factor in ("Player lookup", "Status") and not q.error
+        if q.factor in ("Player lookup", "Last-name lookup", "Status") and not q.error and q.rows
     ]
     claims += [Claim(f.summary, f.evidence) for f in factors if f.evidence and f.support != "not supported"]
     answer, verdict_by = verdict
@@ -622,6 +679,7 @@ def _assemble(
         player=plan.player,
         asked=asked,
         players=plan.players,
+        name_note=plan.name_note(),
     )
     trace(
         run_id, AGENT_NAME, "answer", "ok", duration_ms=_ms(started),
@@ -762,13 +820,30 @@ def _run_plan(
     lookup = QueryRecord(1, "team, position and roster status", factor_queries.lookup_sql(candidates, season))
     lookup.factor = "Player lookup"
     _run_query(run_id, lookup, action="player_lookup")
-    if lookup.error or not lookup.rows:
+    if lookup.error:
         return plan
     try:
         players = factor_queries.parse_players(lookup.rows, question)
     except (IndexError, TypeError, ValueError) as error:
         trace(run_id, AGENT_NAME, "player_lookup", "error", error=f"bad lookup rows: {error}")
         return plan
+    plan.queries.append(lookup)
+
+    # A choice ("Trey Mcbride or Bowers") may name a player by last name only.
+    choice = factor_queries.COMPARE_CUE.search(question) is not None and question_type in (
+        "compare", "start_sit", "waiver", "other")
+    if (choice and len(players) < 2) or not players:
+        players = _last_names(run_id, question, plan, players, season, scoring, choice)
+    if not players:
+        plan.queries.clear()
+        return plan
+    last_words = [n.word for n in plan.last_names if n.player]
+    if choice and question_type != "compare" and len(players) >= 2 and factor_queries.is_compare_question(
+            question, last_words):
+        trace(run_id, AGENT_NAME, "compare", "ok", reason="a choice between two players",
+              players=[p.name for p in players[:2]], from_type=question_type)
+        question_type = plan.question_type = "compare"
+    week_named = factor_queries.question_week(question)
 
     if question_type == "compare":
         pair = [p for n in player_names for p in players if factor_queries.same_player(p.name, n)]
@@ -782,11 +857,10 @@ def _run_plan(
         else:
             plan.players = pair[:2]
             plan.player = plan.players[0]
-            plan.queries.append(lookup)
             # A team the question names that is neither player's is a wrong premise.
             a, b = (factor_queries.wrong_teams(question, p) for p in plan.players)
             plan.wrong_teams = [t for t in a if t in b]
-            for planned in factor_queries.compare_bundle(plan.players, season, week, scoring):
+            for planned in factor_queries.compare_bundle(plan.players, season, week, scoring, week_named):
                 record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
                 _run_query(run_id, record, action="factor_query")
                 plan.queries.append(record)
@@ -795,13 +869,43 @@ def _run_plan(
     named = [p for p in players if player_name and p.name.lower() == player_name.lower()]
     not_owned = [p for p in players if not (memory and memory.owns(p.name))]
     plan.player = (named or not_owned or players)[0]
-    plan.queries.append(lookup)
     plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
-    for planned in factor_queries.plan(question_type, plan.player, season, week, scoring):
+    for planned in factor_queries.plan(question_type, plan.player, season, week, scoring, week_named):
         record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
         _run_query(run_id, record, action="factor_query")
         plan.queries.append(record)
     return plan
+
+
+def _last_names(
+    run_id: str, question: str, plan: Plan, players: list[factor_queries.Player], season: int,
+    scoring: factor_queries.Scoring, choice: bool,
+) -> list[factor_queries.Player]:
+    """Look up single words that may be last names ("Bowers") and add the players they
+    resolve to, in question order. Raises NeedsClarification when the question still names
+    too few players and a last name matched nobody, or several players equally."""
+    words = factor_queries.last_name_words(question, players)
+    if not words:
+        return players
+    record = QueryRecord(len(plan.queries) + 1, f"skill players with the last name {', '.join(words)}",
+                         factor_queries.last_name_lookup_sql(words, season, scoring), factor="Last-name lookup")
+    _run_query(run_id, record, action="player_lookup")
+    if record.error:
+        return players
+    plan.queries.append(record)
+    names = factor_queries.resolve_last_names(words, record.headers, record.rows, players)
+    plan.last_names = [n for n in names if n.player]
+    found = _unique([*players, *(n.player for n in plan.last_names)])
+    trace(run_id, AGENT_NAME, "last_names", "ok",
+          resolved={n.word: n.player.name for n in plan.last_names},
+          rules={n.word: n.rule for n in plan.last_names},
+          unresolved={n.word: [p.name for p, _ in n.options] for n in names if not n.player})
+    unresolved = [n for n in names if not n.player]
+    if unresolved and ((choice and len(found) < 2) or not found):
+        message = factor_queries.clarify_message(unresolved)
+        trace(run_id, AGENT_NAME, "clarify", "ok", message=message)
+        raise NeedsClarification(message, [p for n in unresolved for p, _ in n.options])
+    return factor_queries.order_in_question(found, question)
 
 
 def _unique(players: list[factor_queries.Player]) -> list[factor_queries.Player]:

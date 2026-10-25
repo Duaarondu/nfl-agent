@@ -247,7 +247,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 318 tests
+pytest           # 357 tests
 ```
 
 The tests cover:
@@ -285,6 +285,7 @@ Live runs saved by `scripts/try_pipeline.py --live`. Each folder has `answer.md`
 | [Who becomes the Bucs' WR1 if Mike Evans is out?](examples/who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-171146-c8005cf773a5/answer.md) (wrong premise) | live Zetaris | planner, 3/3 factors, verdict: model; critic review: rules | Corrects TB to SF; "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle." 148.4s |
 | [Half-PPR league memory (c1)](examples/12-team-half-ppr-my-te-is-george-kittle-and-my-wr-is-davante/20261025-171545-737f52e76684/answer.md): "12-team half-PPR, my TE is George Kittle…" | live Zetaris | planner, 2/3 factors: model; Team usage, verdict, critic review: rules | Skips rostered Kittle; picks up Christian McCaffrey (22.8%), 18 half-PPR points per game. 238.5s |
 | [Half-PPR league memory (c2)](examples/should-i-pick-up-a-49ers-receiver-if-evans-misses-time/20261025-171850-c6bfcb00aeb7/answer.md): "Should I pick up a 49ers receiver if Evans misses time?" | live Zetaris | planner, 3/3 factors: model; verdict, critic review: rules | Treated as a replacement question; picks up McCaffrey, not Evans. 184.9s |
+| [Who should I start Trey Mcbride or Bowers for week 7](examples/who-should-i-start-trey-mcbride-or-bowers-for-week-7/20261025-193807-e7adc890c23c/answer.md) (last name only) | live Zetaris | every step: model | Resolves "Bowers = Brock Bowers, LV TE" and compares; week 7 matchups (McBride vs DEN, rank 15 of 32; Bowers vs LA, rank 31). Round 1 blocks "Start Trey McBride" (17.2 vs 20.6 PPR per game); round 2 approves "Start Brock Bowers over Trey McBride". 153.6s |
 | [Jameson Williams vs George Pickens](examples/i-have-jameson-williams-on-my-bench-and-george-pickens-in-my/20261025-180054-2d2fcbc02978/answer.md) | live Zetaris | every step: model | "Start George Pickens over Jameson Williams", half-PPR, both stored as rostered. 1 round, 128.7s |
 | [Critic demo](examples/critic-demo-who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-125256-5cfacb69069d/answer.md) (**starts from a saved Analyst answer**, not a fresh run) | saved query rows from the Oct 22 run | the Analyst is not rerun; critic reviews and revised verdict: rules (model calls fell back) | Round 1 blocks "Start Deebo Samuel" (11.1% target share vs Kittle's 24.9%) and two copied `[strong]` labels; round 2 approves "Pick up George Kittle". 170.8s |
 
@@ -307,7 +308,7 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
     DuckDB.
   - **Spark sweep:** `scripts/check_factor_queries_live.py` runs every planned query,
     for every question type including compare and in every scoring, against the live
-    cluster. It catches SQL that DuckDB accepts but Spark rejects. Last run: 148 distinct
+    cluster. It catches SQL that DuckDB accepts but Spark rejects. Last run: 278 distinct
     queries, 0 SQL errors.
 - **Meterless:**
   - **Nightshift runtime:** the only model provider, reached through its

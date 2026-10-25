@@ -108,6 +108,22 @@ def test_compare_run_returns_both_players_and_head_to_head_factors(server, model
     assert {f["favours"] for f in body["factors"]} <= {"Jameson Williams", "George Pickens", "even"}
     assert len(body["factors"]) == 5
 
+
+def test_unknown_last_name_gets_a_clarifying_question(server, model):
+    all_fail(model)
+    status, body = call(server, "/run", {"question": "Should I start Trey McBride or Zzyzx?"})
+    assert status == 422 and body["error"] == "needs_clarification"
+    assert body["message"].endswith("Which player do you mean? Please give their full name.")
+    assert body["options"] == [] and "answer" not in body
+
+
+def test_last_name_run_says_who_it_resolved(server, model):
+    all_fail(model)
+    status, body = call(server, "/run", {"question": "Who should I start Trey Mcbride or Bowers for week 7"})
+    assert status == 200 and body["question_type"] == "compare"
+    assert body["name_note"] == "Bowers = Brock Bowers, LV TE." and "Bowers = Brock Bowers, LV TE." in body["answer"]
+    assert [p["name"] for p in body["players"]] == ["Trey McBride", "Brock Bowers"]
+
 def test_run_with_memory(server, model, tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
     all_fail(model)

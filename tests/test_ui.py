@@ -63,6 +63,7 @@ def test_ui_page_has_the_inputs_chips_and_sponsors(servers):
     assert "Who becomes the Bucs' WR1 if Mike Evans is out?" in page
     assert 'data-user="demo"' in page and "12-team half-PPR" in page
     assert "I have Jameson Williams on my bench and George Pickens in my starting lineup, who should I pick?" in page
+    assert ">McBride or Bowers</button>" in page
     for sponsor in ("Zetaris", "Meterless Nightshift", "NVIDIA Nemotron", "Meterless H-MEM"):
         assert sponsor in page
     assert "Download trace (JSONL)" in page

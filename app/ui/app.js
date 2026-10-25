@@ -223,6 +223,11 @@ async function finish(run, status, reply, lines) {
     } catch (error) { /* the reply has the result; the timeline keeps its last poll */ }
   }
   if (lines) renderTimeline(lines, false);
+  if (reply && reply.error === "needs_clarification") {
+    setStatus("unresolved", "Which player?");
+    showError(reply.message, "Which player? ");
+    return;
+  }
   if (status !== 200) {
     setStatus("error", "Failed");
     showError(reply && reply.message ? reply.message : `The API returned HTTP ${status}.`);
@@ -238,9 +243,9 @@ function setStatus(cls, text) {
   pill.textContent = text;
 }
 
-function showError(message) {
+function showError(message, title = "Could not answer. ") {
   const box = $("error");
-  box.replaceChildren(el("strong", { text: "Could not answer. " }), message);
+  box.replaceChildren(el("strong", { text: title }), message);
   box.hidden = false;
 }
 

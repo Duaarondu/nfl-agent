@@ -47,7 +47,7 @@ os.environ.setdefault("SAMPLE_MODE", "true")
 
 from app import pipeline, trace  # noqa: E402
 from app.agents import memory  # noqa: E402
-from app.agents.analyst import AnalystError  # noqa: E402
+from app.agents.analyst import AnalystError, NeedsClarification  # noqa: E402
 from app.pipeline import PipelineResult  # noqa: E402
 from app.trace import new_run_id  # noqa: E402
 
@@ -136,6 +136,9 @@ def _answer(run_id: str, question: str, user_id: str | None, lines: list[dict[st
     started = time.perf_counter()
     try:
         run = pipeline.answer(question, run_id=run_id, user_id=user_id)
+    except NeedsClarification as error:  # a last name matched nobody, or several players: ask, don't guess
+        return 422, {"error": "needs_clarification", "message": str(error), "run_id": run_id,
+                     "options": [{"name": p.name, "team": p.team, "position": p.position} for p in error.options]}
     except AnalystError as error:
         return 422, {"error": "could_not_answer", "message": str(error), "run_id": run_id}
     except Exception as error:  # noqa: BLE001 - the reply never carries a stack trace
@@ -182,6 +185,7 @@ def to_json(run: PipelineResult, lines: list[dict[str, Any]], seconds: float) ->
         "player": None if r.player is None else
                   {"name": r.player.name, "team": r.player.team, "position": r.player.position},
         "players": [{"name": p.name, "team": p.team, "position": p.position} for p in r.players],
+        "name_note": r.name_note,
         "season_context": r.season_context,
         "factors": [{"factor": f.factor, "support": f.support, "summary": f.summary, "rated_by": f.rated_by,
                      "rule": f.rule, "favours": f.favours, "evidence": evidence(f.evidence)} for f in r.factors],

@@ -34,7 +34,8 @@ queries (`app/agents/factor_queries.py`):
   - points allowed by opponent
   - depth chart order
   - games without the player
-  - next opponent from `schedules`
+  - next opponent from `schedules`, with points allowed to the position and its rank
+  - last-name lookup on `rosters` ("Bowers" = Brock Bowers)
   - head-to-head comparisons of two players
 - **What the model sees:** the factor agents see only facts computed from these rows.
 - **Claims and checks:** every claim in an answer carries the `query_id`, SQL, headers
@@ -48,17 +49,18 @@ queries (`app/agents/factor_queries.py`):
 **Spark sweep.** `scripts/check_factor_queries_live.py` runs every planned query
 against the live cluster:
 - **Question types:** why, replacement, start_sit, waiver and other, plus compare for
-  two pairs (Jameson Williams vs George Pickens, and Christian McCaffrey vs Mike Evans,
-  an RB against a WR).
+  three pairs (Jameson Williams vs George Pickens, Christian McCaffrey vs Mike Evans,
+  an RB against a WR, and Trey McBride vs Brock Bowers), last-name lookups (Bowers,
+  McBride, Johnson) and next matchups for a named week.
 - **Scoring:** PPR, half-PPR and standard.
-- **Players:** six (Christian Watson, Mike Evans, Puka Nacua, Christian McCaffrey,
-  Jameson Williams and George Pickens).
+- **Players:** eight (Christian Watson, Mike Evans, Puka Nacua, Christian McCaffrey,
+  Jameson Williams, George Pickens, Trey McBride and Brock Bowers).
 - **Purpose:** it catches SQL that DuckDB accepts but Spark rejects.
 - **Errors:** cluster and transport errors are retried once and reported separately
   from SQL errors.
-- **Last run (25 October 2026):** 148 distinct queries, 0 SQL errors. One query hit a
-  Thrift `TTransportException` twice and passed when rerun on its own. All 30 compare
-  queries passed.
+- **Last run (25 October 2026):** 278 distinct queries, 0 SQL errors. Four queries hit
+  cluster errors (Thrift `TTransportException` or the 60s timeout) twice; all four passed
+  when rerun on their own.
 
 **Fallbacks.**
 - **Retry:** a live query that fails fast with a transient cluster error (Thrift

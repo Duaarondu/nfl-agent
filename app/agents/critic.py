@@ -104,7 +104,8 @@ ANY_PPR = re.compile(r"(?<!non-)(?<!non )\bPPR\b", re.I)
 
 @dataclass
 class Issue:
-    check: str  # verdict_support, numbers, artifacts, question_fit, timing or model_review
+    check: str  # verdict_support, numbers, artifacts, question_fit, timing, user_context, compare, no_data,
+    #             position_label or model_review
     where: str  # "answer" or "factor:<name>"
     claim: str  # the words being questioned
     reason: str
@@ -161,6 +162,8 @@ def check_answer(result: AnalystResult) -> list[Issue]:
         *check_timing(result),
         *check_user_context(result),
         *check_compare(result),
+        *check_has_data(result),
+        *check_position_labels(result),
     ]
 
 
@@ -573,6 +576,58 @@ def _player_numbers(result: AnalystResult, name: str) -> list[float]:
 
 def _plain(text: str) -> str:
     return text.replace("'", "").replace("\u2019", "")
+
+
+# --- h) no recommendation without data ---
+
+LOOKUP_FACTORS = ("Player lookup", "Last-name lookup", "Status")
+OVER = re.compile(r"\bover\s+([A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*)*)")
+
+
+def check_has_data(result: AnalystResult) -> list[Issue]:
+    """A start/sit or compare verdict may only name players the evidence has rows for
+    (stats, usage or matchup rows; a roster or injury row alone is not data to compare)."""
+    if result.question_type not in ("start_sit", "compare"):
+        return []
+    verdict = verdict_sentence(result.answer)
+    if not verdict or _action(verdict) not in ("start", "sit", "bench"):
+        return []
+    names = [n.rstrip(".") for n in (recommended_name(verdict), *(m.group(1) for m in OVER.finditer(verdict))) if n]
+    return [
+        Issue("no_data", "answer", verdict,
+              f"{name} has no rows in the data (no stats, usage or matchup rows), so the answer cannot pick "
+              f"between players: say {name} couldn't be found instead of picking a winner.")
+        for name in dict.fromkeys(names) if not _has_rows(result, name)
+    ]
+
+
+def _has_rows(result: AnalystResult, name: str) -> bool:
+    return any(
+        _named(str(cell), name)
+        for q in result.queries if not q.error and q.factor not in LOOKUP_FACTORS
+        for row in q.rows for cell in row if isinstance(cell, str) and cell[:1].isupper()
+    )
+
+
+# --- i) position labels match the roster ---
+
+
+def check_position_labels(result: AnalystResult) -> list[Issue]:
+    """A "WR1"-style label must match the player's roster position: blocking in the
+    answer, recorded in a model-written factor summary."""
+    positions = factor_queries.known_positions([(q.headers, q.rows) for q in result.queries if not q.error])
+    issues = [
+        Issue("position_label", "answer", sentence, f"'{label}' is wrong for {name}, who is a {pos}.")
+        for sentence, label, name, pos in factor_queries.position_label_problems(result.answer, positions)
+    ]
+    for f in result.factors:
+        if f.rated_by == "model":
+            issues += [
+                Issue("position_label", f"factor:{f.factor}", sentence,
+                      f"'{label}' is wrong for {name}, who is a {pos}.", blocking=False)
+                for sentence, label, name, pos in factor_queries.position_label_problems(f.summary, positions)
+            ]
+    return issues
 
 
 def verdict_sentence(answer: str) -> str | None:

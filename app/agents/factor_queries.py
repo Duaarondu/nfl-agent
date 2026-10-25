@@ -148,9 +148,16 @@ COMPARE_CUE = re.compile(
 FULL_NAME = re.compile(r"\b[A-Z][a-z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+)+")
 
 
-def is_compare_question(question: str) -> bool:
-    """A choice cue and at least two full names ("Jameson Williams ... George Pickens")."""
-    return COMPARE_CUE.search(question) is not None and len(set(FULL_NAME.findall(question))) >= 2
+def is_compare_question(question: str, last_names: tuple[str, ...] | list[str] = ()) -> bool:
+    """A choice cue and at least two players: full names ("Jameson Williams ... George
+    Pickens"), plus any single words in last_names, the last names that resolved to a
+    player ("Trey McBride or Bowers")."""
+    if COMPARE_CUE.search(question) is None:
+        return False
+    full = set(FULL_NAME.findall(question))
+    covered = {w.lower() for f in full for w in f.split()}
+    single = {w.lower() for w in last_names} - covered
+    return len(full) + len(single) >= 2
 
 
 def is_why_question(question: str) -> bool:
@@ -192,10 +199,162 @@ def lookup_sql(candidates: list[str], season: int) -> str:
 def parse_players(rows: list[list], question: str) -> list[Player]:
     """Players from lookup rows, in the order the question names them."""
     players = [
-        Player(str(r[0]), str(r[1]), str(r[2]), str(r[3]), r[4], int(r[5])) for r in rows
+        Player(str(r[0]), str(r[1]), str(r[2]), str(r[3]), r[4], int(float(r[5]))) for r in rows
     ]
-    text = question.lower()
-    return sorted(players, key=lambda p: text.find(p.name.lower()))
+    return order_in_question(players, question)
+
+
+def order_in_question(players: list[Player], question: str) -> list[Player]:
+    """Players in the order the question names them, by full name or else by last name."""
+    text = question.lower().replace("’", "'")
+
+    def at(p: Player) -> int:
+        i = text.find(p.name.lower())
+        if i >= 0:
+            return i
+        last = name_key(p.name).split()[-1:]
+        m = re.search(rf"\b{re.escape(last[0])}\b", text) if last else None
+        return m.start() if m else len(text)
+
+    return sorted(players, key=at)
+
+
+# Capitalised words in questions that are not players' last names.
+NOT_LAST_NAMES = {
+    "who", "what", "why", "how", "which", "should", "would", "could", "will", "can", "do", "does", "did",
+    "is", "are", "was", "start", "starting", "sit", "bench", "play", "pick", "flex", "add", "drop", "stash",
+    "trade", "keep", "week", "weeks", "this", "next", "the", "and", "or", "vs", "versus", "over", "between",
+    "one", "player", "players", "his", "him", "her", "my", "me", "mine", "you", "your", "for", "with", "from",
+    "ppr", "half", "standard", "league", "team", "roster", "lineup", "waiver", "waivers", "fantasy", "points",
+    "game", "games", "season", "today", "tonight", "sunday", "monday", "thursday", "saturday", "qb", "rb", "wr",
+    "te", "dst", "def", "kicker", "out", "injured", "hurt", "if", "please", "thanks", "hey", "help",
+}
+CHOICE_WORDS = {"or", "vs", "vs.", "versus", "over"}
+
+
+def last_name_words(question: str, found: list[Player]) -> list[str]:
+    """Single words that may be a player's last name, as written: capitalised, or next to
+    "or" / "vs" / "over"; not a common word, team or position, and not part of a player
+    already found ("Trey Mcbride or Bowers" -> ["bowers"] once McBride is found)."""
+    covered = {t for p in found for t in name_key(p.name).split()}
+    teams = {w for names in TEAM_NAMES.values() for n in names for w in n.split()}
+    tokens = re.findall(r"[A-Za-z][A-Za-z.'\-]*", question.replace("’", "'"))
+    clean = [t.rstrip(".").removesuffix("'s").removesuffix("'") for t in tokens]
+
+    def name_like(j: int) -> bool:  # a capitalised word that is not a common word
+        return 0 <= j < len(clean) and clean[j][:1].isupper() and clean[j].lower() not in NOT_LAST_NAMES
+
+    words = []
+    for i, raw in enumerate(tokens):
+        word = clean[i]
+        low = word.lower()
+        if len(low) < 3 or low in NOT_LAST_NAMES or low in covered or low in teams or POSITION_LABEL.fullmatch(word):
+            continue
+        if name_like(i - 1) or name_like(i + 1):
+            continue  # part of a full name ("Nobody Atall"): the full-name lookup's job
+        prev = tokens[i - 1].lower() if i else ""
+        nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
+        if (word[:1].isupper() or prev in CHOICE_WORDS or nxt in CHOICE_WORDS) and low not in {
+                w.lower() for w in words}:
+            words.append(word)
+    return words
+
+
+def last_name_lookup_sql(words: list[str], season: int, s: Scoring = PPR) -> str:
+    """Skill players on this season's rosters whose last name is one of words, with their
+    fantasy points this season (to pick between players who share a last name)."""
+    like = " OR ".join(
+        f"LOWER(full_name) LIKE {_quote('% ' + w.lower())} OR LOWER(full_name) LIKE {_quote('% ' + w.lower() + ' %')}"
+        for w in words
+    )
+    positions = ", ".join(_quote(p) for p in SKILL_POSITIONS)
+    return (
+        "WITH latest AS (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters "
+        f"WHERE season = {season} AND position IN ({positions}) AND ({like}) GROUP BY gsis_id), "
+        f"pts AS (SELECT player_id, ROUND(SUM({s.expr()}), 1) AS season_points FROM NFLVERSE.player_stats "
+        f"WHERE season = {season} GROUP BY player_id) "
+        "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week, "
+        f"p.season_points AS season_{s.key}_points "
+        "FROM NFLVERSE.rosters r JOIN latest l ON r.gsis_id = l.gsis_id AND r.week = l.week "
+        "LEFT JOIN pts p ON p.player_id = r.gsis_id "
+        f"WHERE r.season = {season} AND r.position IN ({positions}) ORDER BY r.full_name"
+    )
+
+
+@dataclass
+class LastName:
+    """One last name from the question and what it resolved to."""
+    word: str  # as written in the question
+    player: Player | None  # None: nobody, or several equally likely players (options)
+    options: list[tuple[Player, float | None]]  # the matches, most fantasy points first
+    rule: str = ""  # how the player was chosen
+
+    def note(self) -> str:
+        p = self.player
+        return f"{self.word} = {p.name}, {p.team} {p.position}." if p else ""
+
+
+def resolve_last_names(
+    words: list[str], headers: list[str], rows: list[list], others: list[Player]
+) -> list[LastName]:
+    """Resolve each last name: one match; else the same position as the other players
+    named; then the most fantasy points. Two or more left with the same points (or none)
+    is ambiguous: no player, only options."""
+    t = _Rows(headers, rows)
+    points_col = next((h for h in headers if h.startswith("season_") and h.endswith("_points")), "")
+    seen, candidates = set(), []
+    for row, pts in zip(rows, t.col(points_col) if points_col else [None] * len(rows)):
+        player = Player(str(row[0]), str(row[1]), str(row[2]), str(row[3]), row[4], int(float(row[5])))
+        if player.player_id not in seen:
+            seen.add(player.player_id)
+            candidates.append((player, pts))
+    positions = {p.position for p in others}
+    out = []
+    for word in words:
+        matches = [(p, pts) for p, pts in candidates if name_key(p.name).split()[-1:] == [word.lower()]]
+        matches.sort(key=lambda m: -1 if m[1] is None else m[1], reverse=True)
+        if not matches:
+            out.append(LastName(word, None, []))
+            continue
+        if len(matches) == 1:
+            out.append(LastName(word, matches[0][0], matches, "the only skill player with this last name"))
+            continue
+        same = [m for m in matches if m[0].position in positions]
+        pool = same or matches
+        why = f"same position as {', '.join(p.name for p in others)}" if same else ""
+        if len(pool) == 1:
+            out.append(LastName(word, pool[0][0], matches, why))
+            continue
+        (top, top_pts), (_, next_pts) = pool[0], pool[1]
+        if top_pts and top_pts > (next_pts or 0):
+            rule = f"most {scoring_of(headers).label} points this season ({_fmt(top_pts)})"
+            out.append(LastName(word, top, matches, f"{why}; {rule}" if why else rule))
+        else:
+            out.append(LastName(word, None, matches))
+    return out
+
+
+def clarify_message(unresolved: list[LastName]) -> str:
+    """Ask which player the question means, for each last name that did not resolve."""
+    parts = []
+    for n in unresolved:
+        name = n.word
+        if not n.options:
+            parts.append(f'I couldn\'t find a skill player called "{name}" on this season\'s rosters.')
+        else:
+            listed = "; ".join(f"{p.name} ({p.team}, {p.position})" for p, _ in n.options[:6])
+            more = f", and {len(n.options) - 6} more" if len(n.options) > 6 else ""
+            parts.append(f'"{name}" could be {len(n.options)} players: {listed}{more}.')
+    return " ".join(parts) + " Which player do you mean? Please give their full name."
+
+
+WEEK_IN_QUESTION = re.compile(r"\bweek\s+(\d{1,2})\b", re.I)
+
+
+def question_week(question: str) -> int | None:
+    """The week the question names ("for week 7"), if any."""
+    m = WEEK_IN_QUESTION.search(question)
+    return int(m.group(1)) if m and 1 <= int(m.group(1)) <= 22 else None
 
 
 def teams_mentioned(question: str) -> list[str]:
@@ -393,8 +552,11 @@ def games_without_query(p: Player, season: int, s: Scoring = PPR) -> PlannedQuer
     )
 
 
-def compare_bundle(players: list[Player], season: int, latest_week: int, s: Scoring = PPR) -> list[PlannedQuery]:
-    """One query per head-to-head factor, each with a row (or rows) per player."""
+def compare_bundle(
+    players: list[Player], season: int, latest_week: int, s: Scoring = PPR, week: int | None = None
+) -> list[PlannedQuery]:
+    """One query per head-to-head factor, each with a row (or rows) per player.
+    week: the week the question names, for the matchup (default: the next game)."""
     ids = ", ".join(_quote(p.player_id) for p in players)
     names = " vs ".join(p.name for p in players)
     pts = s.expr("ps.")
@@ -450,40 +612,70 @@ def compare_bundle(players: list[Player], season: int, latest_week: int, s: Scor
             f"FROM NFLVERSE.player_stats ps WHERE ps.season = {season} AND ps.player_id IN ({ids}) "
             "GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
         ),
-        PlannedQuery(
-            "Next matchup",
-            f"{names}: next opponent after week {latest_week} and its average {s.label} points allowed to the "
-            "position (rank 1 = most allowed)",
-            f"WITH players AS ({roster}), "
-            "games AS (SELECT home_team AS team, away_team AS opponent, week FROM NFLVERSE.schedules "
-            f"WHERE season = {season} AND week > {latest_week} "
-            "UNION ALL SELECT away_team AS team, home_team AS opponent, week FROM NFLVERSE.schedules "
-            f"WHERE season = {season} AND week > {latest_week}), "
-            "next_week AS (SELECT team, MIN(week) AS week FROM games GROUP BY team), "
-            f"allowed AS (SELECT opponent_team, position, week, SUM({s.expr()}) AS pts "
-            f"FROM NFLVERSE.player_stats WHERE season = {season} GROUP BY opponent_team, position, week), "
-            f"avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_{s.key}_allowed "
-            "FROM allowed GROUP BY opponent_team, position), "
-            f"ranked AS (SELECT opponent_team, position, avg_{s.key}_allowed, "
-            f"RANK() OVER (PARTITION BY position ORDER BY avg_{s.key}_allowed DESC) AS allowed_rank FROM avg_allowed) "
-            "SELECT p.player, p.team, p.position, n.week AS next_week, g.opponent, "
-            f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank "
-            "FROM players p JOIN next_week n ON n.team = p.team "
-            "JOIN games g ON g.team = p.team AND g.week = n.week "
-            "LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position "
-            "ORDER BY p.player",
-        ),
+        matchup_query(players, season, latest_week, s, week),
     ]
 
 
+def matchup_query(
+    players: list[Player], season: int, latest_week: int, s: Scoring = PPR, week: int | None = None
+) -> PlannedQuery:
+    """Each player's opponent and that defense's average points allowed per game to the
+    player's position, ranked (1 = most allowed), in the league's scoring.
+
+    week: the week the question names; else each team's next game after latest_week.
+    A team with no game that week gets a row with no opponent (on bye); played = 1 when
+    the game already has a score. opp_games is how many games the average is over.
+    """
+    names = " vs ".join(p.name for p in players)
+    roster = " UNION ALL ".join(
+        f"SELECT {_quote(p.player_id)} AS player_id, {_quote(p.name)} AS player, {_quote(p.team)} AS team, "
+        f"{_quote(p.position if p.position in SKILL_POSITIONS else 'WR')} AS position"
+        for p in players
+    )
+    games = ("games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules "
+             f"WHERE season = {season} "
+             "UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules "
+             f"WHERE season = {season})")
+    if week is None:
+        target = f"target AS (SELECT team, MIN(week) AS week FROM games WHERE week > {latest_week} GROUP BY team)"
+        which = f"next opponent after week {latest_week}"
+    else:
+        target = f"target AS (SELECT DISTINCT team, {int(week)} AS week FROM players)"
+        which = f"week {int(week)} opponent"
+    return PlannedQuery(
+        "Next matchup",
+        f"{names}: {which} and its average {s.label} points allowed per game to the position "
+        "(rank 1 = most allowed)",
+        f"WITH players AS ({roster}), {games}, {target}, "
+        f"allowed AS (SELECT opponent_team, position, week, SUM({s.expr()}) AS pts "
+        f"FROM NFLVERSE.player_stats WHERE season = {season} GROUP BY opponent_team, position, week), "
+        f"avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_{s.key}_allowed, "
+        "COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), "
+        f"ranked AS (SELECT opponent_team, position, avg_{s.key}_allowed, opp_games, "
+        f"RANK() OVER (PARTITION BY position ORDER BY avg_{s.key}_allowed DESC) AS allowed_rank, "
+        "COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) "
+        "SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, "
+        "CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, "
+        f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank, r.teams_ranked, r.opp_games "
+        "FROM players p LEFT JOIN target t ON t.team = p.team "
+        "LEFT JOIN games g ON g.team = p.team AND g.week = t.week "
+        "LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position "
+        "ORDER BY p.player",
+    )
+
+
 def plan(
-    question_type: str, player: Player, season: int, latest_week: int, scoring: Scoring = PPR
+    question_type: str, player: Player, season: int, latest_week: int, scoring: Scoring = PPR,
+    week: int | None = None,
 ) -> list[PlannedQuery]:
+    """week: the week the question names, for the start/sit and waiver matchup."""
     if question_type == "why":
         return why_bundle(player, season, scoring)
     bundle = team_bundle(player, season, latest_week, scoring)
     if question_type == "replacement":
         bundle.append(games_without_query(player, season, scoring))
+    if question_type in ("start_sit", "waiver"):
+        bundle.append(matchup_query([player], season, latest_week, scoring, week))
     return bundle
 
 
@@ -731,17 +923,89 @@ def _h2h_touchdowns(t: _Rows) -> list[str]:
 
 def _h2h_matchup(t: _Rows) -> list[str]:
     allowed = next((h for h in t.headers if h.startswith("opp_avg_")), "")
-    return [
-        f"{name} ({team}) plays {opp} in week {week}: {opp} allow {_fmt(avg)} {t.scoring.label} points per game "
-        f"to {pos}s (rank {_fmt(rank)} of 32, 1 = most allowed)."
-        for name, team, pos, week, opp, avg, rank in zip(
-            t.text("player"), t.text("team"), t.text("position"), t.text("next_week"), t.text("opponent"),
-            t.col(allowed), t.col("allowed_rank"))
-    ]
+    lines = []
+    for i, (name, team, pos, week, opp) in enumerate(zip(
+            t.text("player"), t.text("team"), t.text("position"), t.text("game_week"), t.text("opponent"))):
+        if not week:
+            lines.append(f"{name} ({team}) has no game left on the schedule.")
+            continue
+        if not opp:
+            lines.append(f"{name} ({team}) is on bye in week {week}.")
+            continue
+        played = (t.col("played")[i] or 0) >= 1
+        head = (f"{name} ({team}) already played {opp} in week {week} (that game is in the data)" if played
+                else f"{name} ({team}) plays {opp} in week {week}")
+        avg, rank = t.col(allowed)[i], t.col("allowed_rank")[i]
+        if avg is None:
+            lines.append(f"{head}; there is no {t.scoring.label} points-allowed data for {opp} yet.")
+            continue
+        teams, games = t.col("teams_ranked")[i], t.col("opp_games")[i]
+        lines.append(
+            f"{head}: {opp} allow {_fmt(avg)} {t.scoring.label} points per game to {pos}s "
+            f"(rank {_fmt(rank)} of {_fmt(teams)}, 1 = most allowed; from {_fmt(games)} "
+            f"game{'' if games == 1 else 's'} so far)."
+        )
+    return lines
 
 
 def _depth(t: _Rows) -> list[str]:
-    return ["Depth order: " + ", ".join(f"{r}. {n}" for r, n in zip(t.text("pos_rank"), t.text("player_name"))) + "."]
+    """ "TE depth chart: 1. Trey McBride (TE1), 2. ...": positions spelled out, so no one
+    is called a WR1 by mistake."""
+    pos = (t.text("pos_abb") or [""])[0]
+    return [f"{pos} depth chart: " + ", ".join(
+        f"{r}. {n} ({pos}{r})" for r, n in zip(t.text("pos_rank"), t.text("player_name"))) + "."]
+
+
+def _last_names(t: _Rows) -> list[str]:
+    points = next((h for h in t.headers if h.startswith("season_") and h.endswith("_points")), "")
+    return [
+        f"{name}: {team}, {pos}, {_fmt(pts)} {t.scoring.label} points this season."
+        for name, team, pos, pts in zip(t.text("full_name"), t.text("team"), t.text("position"),
+                                        t.col(points) if points else [None] * len(t.rows))
+    ]
+
+
+# "WR1", "TE2": a position label, which must match the player's roster position.
+POSITION_LABEL = re.compile(r"\b(QB|RB|WR|TE)(\d{1,2})\b")
+_NAME_COLUMNS = (("full_name", "position"), ("player_display_name", "position"), ("player", "position"),
+                 ("player_name", "pos_abb"))
+
+
+def known_positions(tables: list[tuple[list[str], list[list]]]) -> dict[str, str]:
+    """{player name: position} from every table with a name and a position column."""
+    out: dict[str, str] = {}
+    for headers, rows in tables:
+        for name_col, pos_col in _NAME_COLUMNS:
+            if name_col in headers and pos_col in headers:
+                i, j = headers.index(name_col), headers.index(pos_col)
+                for row in rows:
+                    if row[i] and row[j] and str(row[j]) in SKILL_POSITIONS:
+                        out.setdefault(str(row[i]), str(row[j]))
+                break
+    return out
+
+
+def position_label_problems(text: str, positions: dict[str, str]) -> list[tuple[str, str, str, str]]:
+    """(sentence, label, player, position) for each "WR1"-style label whose player plays
+    another position. The player is the nearest one named before the label in the same
+    sentence, else the first named after it."""
+    problems = []
+    for sentence in sentences(text):
+        labels = list(POSITION_LABEL.finditer(sentence))
+        if not labels:
+            continue
+        named = []
+        for name in positions:
+            last = name_key(name).split()[-1:]
+            for m in re.finditer(rf"\b{re.escape(last[0])}\b", sentence, re.I) if last else ():
+                named.append((m.start(), name))
+        for label in labels:
+            before = [n for n in named if n[0] < label.start()]
+            after = [n for n in named if n[0] > label.start()]
+            who = max(before)[1] if before else (min(after)[1] if after else None)
+            if who and positions[who] != label.group(1):
+                problems.append((sentence, label.group(0), who, positions[who]))
+    return problems
 
 
 _SUMMARIES = {
@@ -755,6 +1019,7 @@ _SUMMARIES = {
     "Matchups": _matchups,
     "Team usage": _team_usage,
     "Depth chart": _depth,
+    "Last-name lookup": _last_names,
     "Games without the player": _without,
     "Weekly opportunity": _h2h_opportunity,
     "Team usage share": _h2h_usage,
@@ -846,6 +1111,14 @@ def rule_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -
         return _grade(top, 20, 15, 0.1), f"highest recent target share {_fmt(top)}% (strong >= 20, moderate >= 15)"
     if factor == "Depth chart":
         return ("moderate" if len(rows) >= 2 else "weak"), f"{len(rows)} players listed on the depth chart"
+    if factor == "Next matchup":
+        week, opp = (t.text("game_week") or [""])[0], (t.text("opponent") or [""])[0]
+        if not opp:
+            return "not supported", f"on bye in week {week}" if week else "no game left on the schedule"
+        rank, teams = (t.col("allowed_rank") or [None])[0], (t.col("teams_ranked") or [None])[0]
+        support = _grade(None if rank is None else 33 - rank, 25, 17, 9)  # rank 1-8 strong, 9-16, 17-24
+        return support, (f"{opp} rank {_fmt(rank)} of {_fmt(teams)} in {label} points allowed to the position "
+                         "(strong 1-8, moderate 9-16, weak 17-24, else not supported)")
     if factor == "Games without the player":
         missed = [g for s, g in zip(t.text("player_status"), t.col("games")) if s == "missed"]
         n = int(max(missed)) if missed else 0
@@ -1008,6 +1281,11 @@ def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], l
     (a, b) = names[:2]
     pa, pb = ppg.get(a), ppg.get(b)
     decided_by = "points per game"
+    byes = on_bye(results)
+    off = [n for n in (a, b) if any(same_player(n, x) for x in byes)]
+    if len(off) == 1:  # a player on bye cannot score: start the other
+        start, bench = (b, a) if off[0] == a else (a, b)
+        return f"Start {start} over {bench}", f"Rule: {bench} is on bye in week {byes[off[0]]}. Decided by the bye."
     if pa is None or pb is None or abs(pa - pb) < 0.5:
         la, lb = late.get(_row_name(a, late)), late.get(_row_name(b, late))
         start, bench = (a, b) if (la or 0) >= (lb or 0) else (b, a)
@@ -1018,6 +1296,24 @@ def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], l
         start, bench = (a, b) if pa > pb else (b, a)
         why = f"Rule: start the player with more {label} points per game: {a} {_fmt(pa)} vs {b} {_fmt(pb)}."
     return f"Start {start} over {bench}", f"{why} Decided by {decided_by}."
+
+
+def on_bye(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
+    """{player: week} for each player on bye in the matchup week."""
+    t = _Rows(*results.get("Next matchup", ([], [])))
+    return {name: week for name, week, opp in zip(t.text("player"), t.text("game_week"), t.text("opponent"))
+            if week and not opp}
+
+
+def matchup_lines(results: dict[str, tuple[list[str], list[list]]]) -> str:
+    rows = results.get("Next matchup", ([], []))
+    return " ".join(summarize("Next matchup", *rows)) if rows[1] else ""
+
+
+def _with_matchup(why: str, results: dict[str, tuple[list[str], list[list]]]) -> str:
+    """The rule-based why, with the matchup lines unless they are already quoted."""
+    lines = matchup_lines(results)
+    return f"{why} {lines}" if lines and "Next matchup (" not in why else why
 
 
 def _per_game_by_player(usage: tuple[list[str], list[list]]) -> dict[str, float | None]:
@@ -1051,6 +1347,7 @@ def rule_verdict(
     if question_type == "compare" and players and len(players) >= 2:
         verdict, rule = compare_verdict(players, results)
         why += f" {rule}"
+        why = _with_matchup(why, results)
     elif question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):
         stand_in, reason = _next_up(player, results, roster)
         verdict = f"Pick up {stand_in} if available" if stand_in else f"Hold until {player.team}'s next depth chart"
@@ -1058,8 +1355,14 @@ def rule_verdict(
     elif question_type == "start_sit":
         s = _scoring(results)
         ppr = _usage(player, results, f"{s.key}_per_game")
-        verdict = f"{'Start' if ppr is not None and ppr >= START_PPR else 'Sit'} {player.name}"
-        why += f" Rule: start at {_fmt(START_PPR)}+ {s.label} per game; he averages {_fmt(ppr)}."
+        bye = on_bye(results)
+        if bye:
+            verdict = f"Sit {player.name}"
+            why += f" Rule: he is on bye in week {next(iter(bye.values()))}."
+        else:
+            verdict = f"{'Start' if ppr is not None and ppr >= START_PPR else 'Sit'} {player.name}"
+            why += f" Rule: start at {_fmt(START_PPR)}+ {s.label} per game; he averages {_fmt(ppr)}."
+        why = _with_matchup(why, results)
     elif question_type == "waiver":
         share = _usage(player, results, "recent_target_share_pct")
         if any(same_player(player.name, x) for x in roster):
@@ -1067,6 +1370,7 @@ def rule_verdict(
         else:
             verdict = f"{'Pick up' if share is not None and share >= PICKUP_SHARE else 'Hold off on'} {player.name}"
         why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; his is {_fmt(share)}%."
+        why = _with_matchup(why, results)
     else:
         verdict = f"Hold {player.name}"
     return verdict, why

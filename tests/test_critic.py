@@ -428,3 +428,58 @@ def test_compare_skips_the_single_player_verdict_support_check(compare_result):
 def test_percentages_without_a_percent_sign_are_artifacts(text, flagged):
     found = [what for _, what in critic._artifacts(text)]
     assert ("a percentage without its % sign" in found) is flagged
+
+
+# --- h) no recommendation without data; i) position labels ---
+
+UI_QUESTION = "Who should I start Trey Mcbride or Bowers for week 7"
+
+
+@pytest.fixture
+def mcbride_start_sit(real_sample, monkeypatch):
+    """McBride alone, as the live UI run answered it (Bowers never looked up)."""
+    from app.agents import analyst
+
+    def respond(messages, **kwargs):
+        system = messages[0]["content"]
+        if system == analyst.CLASSIFY_PROMPT:
+            return {"choices": [{"message": {"content": '{"player_name": "Trey McBride", "question_type": "start_sit"}'}}]}
+        raise meterless.MeterlessError("off")
+
+    monkeypatch.setattr(analyst.meterless, "chat", respond)
+    return analyst.analyze("Should I start Trey McBride this week?")
+
+
+def test_a_verdict_naming_a_player_with_no_rows_is_blocked(mcbride_start_sit):
+    mcbride_start_sit.answer = "Start Trey McBride over Bowers. McBride has a 24.1% target share."
+    [issue] = issues(mcbride_start_sit, "no_data")
+    assert issue.blocking and issue.reason.startswith("Bowers has no rows in the data")
+    assert "say Bowers couldn't be found instead of picking a winner" in issue.reason
+
+
+def test_players_with_rows_pass_the_no_data_check(mcbride_start_sit, compare_result):
+    mcbride_start_sit.answer = "Start Trey McBride. He has a 24.1% target share."
+    assert not issues(mcbride_start_sit, "no_data")
+    assert not issues(compare_result, "no_data")  # Pickens and Williams both have rows
+
+
+def test_wrong_position_label_in_the_answer_blocks(mcbride_start_sit):
+    mcbride_start_sit.answer = "Start Trey McBride. He is the Cardinals' clear WR1 with a 24.1% target share."
+    assert not issues(mcbride_start_sit, "position_label")  # "He": no name to pin the label on
+    mcbride_start_sit.answer = "Start Trey McBride. McBride is the Cardinals' WR1 with a 24.1% target share."
+    [issue] = issues(mcbride_start_sit, "position_label")
+    assert issue.blocking and issue.reason == "'WR1' is wrong for Trey McBride, who is a TE."
+    mcbride_start_sit.answer = "Start Trey McBride. McBride is the Cardinals' TE1 with a 24.1% target share."
+    assert not issues(mcbride_start_sit, "position_label")
+
+
+def test_wrong_position_label_in_a_model_factor_summary_is_recorded(mcbride_start_sit):
+    mcbride_start_sit.factors.append(Factor("Depth chart", "strong", "Trey McBride is the WR1.", [], rated_by="model"))
+    [issue] = issues(mcbride_start_sit, "position_label")
+    assert not issue.blocking and issue.where == "factor:Depth chart"
+
+
+def test_saved_examples_pass_the_new_checks():
+    for slug in (WATSON, BUCS, "i-have-jameson-williams", "12-team-half-ppr", "should-i-pick-up"):
+        result = load_example(slug)
+        assert not [i for i in critic.check_answer(result) if i.check in ("no_data", "position_label") and i.blocking], slug
