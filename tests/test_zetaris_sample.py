@@ -79,3 +79,29 @@ def test_live_failure_falls_back_to_exact_sql_cache(sample_dir, monkeypatch):
     assert run_sql("select   1 as a") == cached
     with pytest.raises(ZetarisError, match="live down"):
         run_sql("SELECT 2 AS a")
+
+
+@pytest.mark.parametrize("message, calls, ok", [
+    ('HTTP 400 {"msg":"org.apache.thrift.transport.TTransportException"}', 2, True),
+    ('HTTP 400 {"msg":"Could not create ResultSet: null"}', 2, True),
+    ("Cannot reach https://cluster: The read operation timed out", 1, False),  # a timeout is not retried
+    ('HTTP 400 {"msg":"[MISSING_ATTRIBUTES.RESOLVED_ATTRIBUTE_APPEAR_IN_OPERATION] ..."}', 1, False),
+])
+def test_transient_cluster_errors_are_retried_once(sample_dir, monkeypatch, message, calls, ok):
+    monkeypatch.setenv("SAMPLE_MODE", "false")
+    monkeypatch.setattr(zetaris, "RETRY_PAUSE_SECONDS", 0)
+    seen = []
+
+    def live(sql, limit):
+        seen.append(sql)
+        if len(seen) == 1:
+            raise ZetarisError(message)
+        return {"headers": ["a"], "data": [["1"]], "total": 1, "timeUsed": 0}
+
+    monkeypatch.setattr(zetaris, "_run_live", live)
+    if ok:
+        assert run_sql("SELECT 1 AS a")["data"] == [["1"]]
+    else:
+        with pytest.raises(ZetarisError):
+            run_sql("SELECT 1 AS a")
+    assert len(seen) == calls

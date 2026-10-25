@@ -16,6 +16,10 @@ Sample mode: each data/sample/<SCHEMA>/<table>.parquet is exposed as the view
 <SCHEMA>.<table> (e.g. NFLVERSE.player_stats), so the same SQL runs in both
 modes. Results use the live response shape, with values as strings.
 
+Retry: a live query that fails fast with a transient cluster error (Thrift
+TTransportException, "Could not create ResultSet") is retried once after a short
+pause. A timeout is not retried: it already used the whole time limit.
+
 Fallback: if a live query fails, run_sql() returns the cached result for the
 exact same SQL from data/sample/zetaris_cache/ when one exists, otherwise
 raises ZetarisError.
@@ -253,6 +257,22 @@ def _run_live(sql: str, limit: int) -> Any:
         raise _unreachable(base_url, error) from error
 
 
+# Errors the cluster returns within milliseconds when its Thrift connection drops; a
+# retry a moment later succeeds (scripts/check_factor_queries_live.py, 2026-10-25).
+TRANSIENT_ERROR = re.compile(r"TTransportException|Could not create ResultSet")
+RETRY_PAUSE_SECONDS = 2.0
+
+
+def _run_live_with_retry(sql: str, limit: int) -> Any:
+    try:
+        return _run_live(sql, limit)
+    except ZetarisError as error:
+        if not TRANSIENT_ERROR.search(str(error)):
+            raise
+    time.sleep(RETRY_PAUSE_SECONDS)
+    return _run_live(sql, limit)
+
+
 def run_sql(sql: str, limit: int | None = None) -> Any:
     """Run one SQL statement and return the parsed JSON response."""
     sql = _single_statement(sql)
@@ -263,7 +283,7 @@ def run_sql(sql: str, limit: int | None = None) -> Any:
         return _run_sample(sql, limit)
 
     try:
-        return _run_live(sql, limit)
+        return _run_live_with_retry(sql, limit)
     except ZetarisError as live_error:
         try:
             return _read_cache(sql)
