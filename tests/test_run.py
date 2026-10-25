@@ -96,6 +96,18 @@ def test_run_with_no_model_is_all_rule_based(server, model):
     assert body["trace"] and {l["run_id"] for l in body["trace"]} == {body["run_id"]}
 
 
+
+def test_compare_run_returns_both_players_and_head_to_head_factors(server, model):
+    all_fail(model)
+    question = ("I have Jameson Williams on my bench and George Pickens in my starting lineup, "
+                "who should I pick?")
+    status, body = call(server, "/run", {"question": question})
+    assert status == 200 and body["question_type"] == "compare"
+    assert [p["name"] for p in body["players"]] == ["Jameson Williams", "George Pickens"]
+    assert body["answer"].startswith("Start George Pickens over Jameson Williams")
+    assert {f["favours"] for f in body["factors"]} <= {"Jameson Williams", "George Pickens", "even"}
+    assert len(body["factors"]) == 5
+
 def test_run_with_memory(server, model, tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
     all_fail(model)

@@ -78,6 +78,15 @@ data. Reply with only this JSON:
 support: how well these facts explain or answer the question. Use only numbers in the
 facts, at most 1 decimal place. If a change matters, say in which week it started."""
 
+COMPARE_FACTOR_PROMPT = """\
+You compare two players on one factor, for a fantasy football manager choosing which
+one to start, from facts computed from nflverse data. Reply with only this JSON:
+{"favours": "<the full name of the player this factor favours, or even>",
+ "support": "strong" | "moderate" | "weak" | "not supported",
+ "summary": "<one sentence with both players' numbers from the facts>"}
+support: how decisively this factor favours that player ("not supported" when even).
+Use only numbers in the facts, at most 1 decimal place, and write percentages with %."""
+
 VERDICT_PROMPT = """\
 You write the verdict for a fantasy football manager from factors already rated
 against nflverse data. Reply with only this JSON:
@@ -85,6 +94,9 @@ against nflverse data. Reply with only this JSON:
  "why": "<2-3 complete sentences>"}
 verdict starts with one of: Pick up, Add, Start, Sit, Bench, Hold, Drop, Stash.
 Never pick up or start the player the question says is out or missing time.
+For a compare question (two players, start which one?), verdict is "Start <A> over <B>",
+naming exactly one of the two to start, and "why" quotes the deciding numbers for both
+players; follow the head-to-head factors, or say why not.
 For a replacement question (who takes over if a player is out), verdict names the
 fantasy pick, backed by target share; the answer then opens with who is next on the
 depth chart, written by the system ("Deebo Samuel is next at WR on the depth chart, but
@@ -195,6 +207,7 @@ class Factor:
     evidence: list[Evidence]
     rated_by: str = "model"  # "model" (its factor agent) or "rule-based" (code thresholds)
     rule: str | None = None  # the threshold applied, when rule-based
+    favours: str | None = None  # compare questions: the player this factor favours, or "even"
 
 
 @dataclass
@@ -225,6 +238,7 @@ class AnalystResult:
     player: factor_queries.Player | None = None
     asked: str = ""  # the question the agents answered, with any wrong premise corrected
     user_context: UserContext | None = None  # league memory the answer was written for
+    players: list[factor_queries.Player] = field(default_factory=list)  # both players of a compare question
 
     @property
     def queries_used(self) -> int:
@@ -240,15 +254,19 @@ class Plan:
     player: factor_queries.Player | None = None
     queries: list[QueryRecord] = field(default_factory=list)
     wrong_teams: list[str] = field(default_factory=list)
+    players: list[factor_queries.Player] = field(default_factory=list)  # compare: both players, question order
 
     def corrected_question(self, question: str) -> str:
-        if not (self.player and self.wrong_teams):
-            return question
+        if not (self.player and self.wrong_teams) or len(self.players) > 1:
+            return question  # with two players the wrong team cannot be pinned on one of them
         return factor_queries.corrected_question(question, self.wrong_teams, self.player.team)
 
     def premise_note(self) -> str | None:
         if not (self.player and self.wrong_teams):
             return None
+        if len(self.players) > 1:
+            on = " and ".join(f"{p.name} is on {p.team}" for p in self.players)
+            return f"{on} in the data (rosters, week {self.player.roster_week}), not {' or '.join(self.wrong_teams)}."
         p = self.player
         return (
             f"{p.name} is on {p.team} in the data (rosters, week {p.roster_week}), "
@@ -275,7 +293,8 @@ def analyze(
     route = route or planner.plan(run_id, question)
     player_name, question_type = route.player_name, route.question_type
     scoring = factor_queries.SCORINGS[memory.scoring] if memory else factor_queries.PPR
-    plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory)
+    plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory,
+                     player_names=route.player_names)
 
     if free_sql:
         return _sql_loop(run_id, question, context, plan)
@@ -293,7 +312,7 @@ def analyze(
     deadline = max(started + TOTAL_BUDGET, time.perf_counter() + VERDICT_RESERVE)
     facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory)
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
-                       memory=memory, out=factor_queries.says_out(question, plan.player.name))
+                       memory=memory, out=factor_queries.says_out(question, plan.player.name), players=plan.players)
     result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
     result.user_context = memory
     return result
@@ -308,6 +327,7 @@ def result_from_dict(data: dict[str, Any]) -> AnalystResult:
     """
     data = data.get("result", data)
     ev = lambda items: [Evidence(**e) for e in items]
+    players = [factor_queries.Player(**p) for p in data.get("players") or []]
     queries = [QueryRecord(**q) for q in data["queries"]]
     player = data.get("player")
     player = factor_queries.Player(**player) if player else factor_queries.parse_players(queries[0].rows, data["question"])[0]
@@ -320,6 +340,7 @@ def result_from_dict(data: dict[str, Any]) -> AnalystResult:
         "player": player,
         "asked": data.get("asked") or data["question"],
         "user_context": user_context_from_dict(data.get("user_context")),
+        "players": players,
     })
 
 
@@ -344,7 +365,7 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
         deadline=deadline, revision=(result.answer, issues), memory=result.user_context,
-        out=factor_queries.says_out(result.question, result.player.name),
+        out=factor_queries.says_out(result.question, result.player.name), players=result.players,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -381,7 +402,7 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
 
     def work(record: QueryRecord) -> None:
         try:
-            replies[record.query_id] = _factor_agent(run_id, question, player_line, record, deadline)
+            replies[record.query_id] = _factor_agent(run_id, question, player_line, record, deadline, plan.players)
         except Exception as error:  # noqa: BLE001 - any failure means the rules take over
             replies[record.query_id] = error
 
@@ -401,30 +422,57 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
         agent = f"factor_agent:{q.factor}"
         reply = replies.get(q.query_id)
         if isinstance(reply, dict):
-            factor = Factor(q.factor, reply["support"], round_numbers(reply["summary"]), _evidence(q))
-            trace(run_id, agent, "rate_factor", "ok", rated_by="model", support=factor.support, query_id=q.query_id)
+            factor = Factor(q.factor, reply["support"], round_numbers(reply["summary"]), _evidence(q),
+                            favours=reply.get("favours"))
+            trace(run_id, agent, "rate_factor", "ok", rated_by="model", support=factor.support,
+                  favours=factor.favours, query_id=q.query_id)
         else:
             reason = "query failed" if q.error else (str(reply) if reply else f"no reply within {window:.0f}s")
-            support, rule = factor_queries.rule_rating(q.factor, results)
-            factor = Factor(q.factor, support, _summary(q), _evidence(q), rated_by="rule-based", rule=rule)
+            favours = None
+            if q.factor in factor_queries.COMPARE_FACTORS:
+                favours, support, rule = factor_queries.compare_rating(q.factor, results)
+            else:
+                support, rule = factor_queries.rule_rating(q.factor, results)
+            factor = Factor(q.factor, support, _summary(q), _evidence(q), rated_by="rule-based", rule=rule,
+                            favours=favours)
             trace(run_id, agent, "rate_factor", "fallback", rated_by="rule-based", support=support,
-                  rule=rule, query_id=q.query_id, reason=reason[:300])
+                  favours=favours, rule=rule, query_id=q.query_id, reason=reason[:300])
         factors.append(factor)
     return sorted(factors, key=lambda f: SUPPORT_LEVELS.index(f.support))
 
 
 def _factor_agent(
-    run_id: str, question: str, player_line: str, record: QueryRecord, deadline: float
+    run_id: str, question: str, player_line: str, record: QueryRecord, deadline: float,
+    players: list[factor_queries.Player] | None = None,
 ) -> dict[str, Any]:
+    """Rate one factor; for a compare question, head-to-head: which of the two players it favours."""
     facts = "\n".join(f"- {line}" for line in factor_queries.summarize(record.factor or "", record.headers, record.rows))
+    head_to_head = record.factor in factor_queries.COMPARE_FACTORS and players and len(players) >= 2
+    label = "Players" if head_to_head else "Player"
     messages = [
-        {"role": "system", "content": FACTOR_PROMPT},
-        {"role": "user", "content": f"Question: {question}\nPlayer: {player_line}\nFactor: {record.factor}\nFacts:\n{facts}"},
+        {"role": "system", "content": COMPARE_FACTOR_PROMPT if head_to_head else FACTOR_PROMPT},
+        {"role": "user", "content": f"Question: {question}\n{label}: {player_line}\nFactor: {record.factor}\nFacts:\n{facts}"},
     ]
+    check = _check_head_to_head([p.name for p in players]) if head_to_head else _check_rating
     return _ask_json(
-        run_id, "factor", messages, FACTOR_MAX_TOKENS, _check_rating,
+        run_id, "factor", messages, FACTOR_MAX_TOKENS, check,
         agent_name=f"factor_agent:{record.factor}", timeout=CALL_TIMEOUT, deadline=deadline,
     )
+
+
+def _check_head_to_head(names: list[str]):
+    """A rating check that also needs "favours": one of the two players' names, or "even"."""
+    def check(reply: dict[str, Any]) -> None:
+        _check_rating(reply)
+        favours = str(reply.get("favours", "")).strip()
+        if favours.lower() == factor_queries.EVEN:
+            reply["favours"] = factor_queries.EVEN
+            return
+        match = next((n for n in names if factor_queries.same_player(n, favours)), None)
+        if match is None:
+            raise ValueError(f"'favours' must be one of: {', '.join(names)}, or even")
+        reply["favours"] = match
+    return check
 
 
 def _check_rating(reply: dict[str, Any]) -> None:
@@ -440,6 +488,7 @@ def _verdict(
     run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
     revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None, out: bool = False,
+    players: list[factor_queries.Player] | None = None,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
@@ -455,7 +504,8 @@ def _verdict(
     except AnalystError as error:
         ranked = [(f.factor, f.support, f.summary) for f in factors]
         roster = memory.roster_names if memory else ()
-        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out)
+        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out,
+                                                   players=players)
         note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
@@ -509,8 +559,18 @@ def _verdict_facts(
     if status:
         lines.append(f"Injury status: {_summary(status)}")
     lines.append("Rated factors (most supported first):")
-    lines += [f"- {f.factor} [{f.support}]: {f.summary}" for f in factors]
+    for f in factors:
+        rating = f.support if not f.favours else (
+            "even" if f.favours == factor_queries.EVEN else f"favours {f.favours}, {f.support}")
+        lines.append(f"- {f.factor} [{rating}]: {f.summary}")
+        if f.favours:  # head-to-head: the verdict needs both players' numbers, not only the agent's sentence
+            lines += [f"    {line}" for line in factor_queries.summarize(f.factor, *_rows_of(queries, f.factor))]
     return lines
+
+
+def _rows_of(queries: list[QueryRecord], factor: str) -> tuple[list[str], list[list[Any]]]:
+    q = next((q for q in queries if q.factor == factor and not q.error), None)
+    return (q.headers, q.rows) if q else ([], [])
 
 
 def _model_verdict(
@@ -561,6 +621,7 @@ def _assemble(
         question_type=plan.question_type,
         player=plan.player,
         asked=asked,
+        players=plan.players,
     )
     trace(
         run_id, AGENT_NAME, "answer", "ok", duration_ms=_ms(started),
@@ -681,17 +742,20 @@ def _season_context(run_id: str) -> tuple[str, int | None, int | None]:
 def _run_plan(
     run_id: str, question: str, player_name: str | None, question_type: str,
     season: int | None, week: int | None, scoring: factor_queries.Scoring = factor_queries.PPR,
-    memory: UserContext | None = None,
+    memory: UserContext | None = None, player_names: tuple[str, ...] = (),
 ) -> Plan:
     """Look the player up (the model's name first, then names in the question) and run their factor queries.
 
     Without a name from the model, a player the question names who is not on the user's
     roster comes first ("my TE is George Kittle. Who replaces Mike Evans?" is about Evans).
+    A compare question needs two players (the model's two names, else the first two the
+    question names, roster or not); with fewer it is answered as start/sit.
     """
     plan = Plan(question_type=question_type)
     candidates = factor_queries.name_candidates(question)
-    if player_name:
-        candidates = [player_name.lower(), *[c for c in candidates if c != player_name.lower()]]
+    named_first = [n.lower() for n in (*player_names, player_name) if n]
+    if named_first:
+        candidates = [*dict.fromkeys(named_first), *[c for c in candidates if c not in named_first]]
     if season is None or week is None or not candidates:
         return plan
 
@@ -706,6 +770,28 @@ def _run_plan(
         trace(run_id, AGENT_NAME, "player_lookup", "error", error=f"bad lookup rows: {error}")
         return plan
 
+    if question_type == "compare":
+        pair = [p for n in player_names for p in players if factor_queries.same_player(p.name, n)]
+        pair = _unique(pair)
+        if len(pair) < 2:
+            pair = _unique([*pair, *players])[:2]
+        if len(pair) < 2:
+            trace(run_id, AGENT_NAME, "compare", "fallback", reason="fewer than two players found",
+                  question_type="start_sit")
+            question_type = plan.question_type = "start_sit"
+        else:
+            plan.players = pair[:2]
+            plan.player = plan.players[0]
+            plan.queries.append(lookup)
+            # A team the question names that is neither player's is a wrong premise.
+            a, b = (factor_queries.wrong_teams(question, p) for p in plan.players)
+            plan.wrong_teams = [t for t in a if t in b]
+            for planned in factor_queries.compare_bundle(plan.players, season, week, scoring):
+                record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
+                _run_query(run_id, record, action="factor_query")
+                plan.queries.append(record)
+            return plan
+
     named = [p for p in players if player_name and p.name.lower() == player_name.lower()]
     not_owned = [p for p in players if not (memory and memory.owns(p.name))]
     plan.player = (named or not_owned or players)[0]
@@ -716,6 +802,15 @@ def _run_plan(
         _run_query(run_id, record, action="factor_query")
         plan.queries.append(record)
     return plan
+
+
+def _unique(players: list[factor_queries.Player]) -> list[factor_queries.Player]:
+    seen, out = set(), []
+    for p in players:
+        if p.player_id not in seen:
+            seen.add(p.player_id)
+            out.append(p)
+    return out
 
 
 def _first_message(context: str, question: str, plan: Plan) -> str:

@@ -114,7 +114,8 @@ function describe(l) {
   }
   if (l.action === "rate_factor" && factor) {
     const by = l.rated_by === "model" ? "model" : "rules";
-    return row(by, `Factor agent: ${factor}`, `${l.support} (${l.rated_by})`, by === "rules" ? "warn" : null);
+    const rating = l.favours ? `${favoursText(l.favours)}, ${l.support}` : l.support;
+    return row(by, `Factor agent: ${factor}`, `${rating} (${l.rated_by})`, by === "rules" ? "warn" : null);
   }
   if (agent === "analyst" && l.action === "verdict" && l.status === "fallback") {
     return row("rules", "Verdict: rule-based", l.verdict || "", "warn");
@@ -316,6 +317,11 @@ function critiqueComparison(r, finalText) {
   );
 }
 
+// A head-to-head factor (compare questions): "favours Pickens", or "even".
+function favoursText(favours) {
+  return favours === "even" ? "even" : `favours ${favours.split(" ").slice(-1)[0]}`;
+}
+
 function factorCards(factors) {
   return el("section", { class: "card" },
     el("h2", { text: "Factors (most to least supported)" }),
@@ -323,6 +329,8 @@ function factorCards(factors) {
       el("div", { class: "factor-head" },
         el("h3", { text: f.factor }),
         el("span", {},
+          f.favours ? el("span", { class: `favours${f.favours === "even" ? " even" : ""}`, text: favoursText(f.favours) }) : null,
+          f.favours ? " " : null,
           el("span", { class: `support ${supportClass(f.support)}`, text: f.support }), " ",
           el("span", { class: `tag ${f.rated_by === "model" ? "nightshift" : "rules"}`, text: f.rated_by === "model" ? "model" : "rule-based" })),
       ),

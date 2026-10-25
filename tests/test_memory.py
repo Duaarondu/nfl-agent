@@ -14,6 +14,8 @@ SESSION_1 = "12-team half-PPR, my TE is George Kittle and my WR is Davante Adams
 BUCS = "Who becomes the Bucs' WR1 if Mike Evans is out?"
 KITTLE = RosterPlayer("00-0033288", "George Kittle", "SF", "TE")
 ADAMS = RosterPlayer("00-0031381", "Davante Adams", "LA", "WR")
+COMPARE = ("I have Jameson Williams on my bench and George Pickens in my starting lineup, "
+           "who should I pick?")
 
 
 @pytest.fixture
@@ -39,6 +41,10 @@ def facts(text):
     ("14-team full PPR", [("teams", "14"), ("scoring", "ppr")]),
     ("my RBs are Bijan Robinson & Breece Hall; who do I start?", [("roster", "Bijan Robinson"), ("roster", "Breece Hall")]),
     ("I dropped Davante Adams yesterday.", [("drop", "Davante Adams")]),
+    (COMPARE, [("roster", "Jameson Williams"), ("roster", "George Pickens")]),
+    ("Pickens is in my lineup and Jameson Williams is on my bench. Who do I start?",
+     [("roster", "Pickens"), ("roster", "Jameson Williams")]),
+    ("Start Pickens in my lineup?", [("roster", "Pickens")]),
     # Not facts about the user's league or roster:
     ("How many PPR points did Mike Evans score?", []),
     ("I have a question about Mike Evans.", []),
@@ -290,3 +296,21 @@ def test_user_context_round_trips_through_json():
     import dataclasses
     data = json.loads(json.dumps(dataclasses.asdict(HALF_CTX)))
     assert memory.user_context_from_dict(data) == HALF_CTX
+
+
+def test_bench_and_lineup_players_are_stored_as_rostered(real_sample, memory_dir):
+    written = memory.store("u1", COMPARE, "run1", miner_fn=None)
+    assert [r.content for r in written] == [
+        "Jameson Williams (DET, WR) is on the user's roster.",
+        "George Pickens (DAL, WR) is on the user's roster.",
+    ]
+    ctx = memory.retrieve("u1", COMPARE, "run2")
+    assert ctx.roster_names == ("Jameson Williams", "George Pickens")
+
+
+def test_compare_with_a_user_id_remembers_both_and_still_answers(real_sample, memory_dir, model):
+    all_fail(model)
+    run = pipeline.answer(COMPARE, user_id="u1", model_review=False)
+    assert run.result.user_context.roster_names == ("Jameson Williams", "George Pickens")
+    assert run.result.answer.startswith("Start George Pickens over Jameson Williams")
+    assert run.approved

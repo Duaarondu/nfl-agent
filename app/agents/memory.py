@@ -60,13 +60,19 @@ TEAMS = re.compile(r"\b(\d{1,2})[- ]team\b", re.I)
 HALF = re.compile(r"\bhalf[- ]?(?:point[- ]?)?(?:ppr|point)\b|\b0?\.5[- ]?ppr\b", re.I)
 STANDARD = re.compile(r"\bnon[- ]?ppr\b|\bstandard(?=[- ](?:scoring|league|format))|\b\d{1,2}[- ]team standard\b", re.I)
 FULL = re.compile(r"\bfull[- ]?ppr\b|\b\d{1,2}[- ]team ppr\b|\bppr (?:league|scoring|format)\b|\b(?:league|scoring) is ppr\b", re.I)
-CUES = re.compile(r"\b(?:my|our) (?:league|team|roster|scoring|qbs?|rbs?|wrs?|tes?)\b|\bppr\b|\bleague\b|\bdropped\b", re.I)
+CUES = re.compile(r"\b(?:my|our) (?:league|team|roster|scoring|bench|(?:starting )?lineup|qbs?|rbs?|wrs?|tes?)\b"
+                  r"|\bppr\b|\bleague\b|\bdropped\b", re.I)
 _POS = r"(?:QB|RB|WR|TE|FLEX)s?"
 ROSTER_CUE = re.compile(
     rf"\bmy (?:{_POS}|team|roster|starters?|bench|guys)\s+(?:is|are|includes?|has|have)\s+"
     r"|\bmy roster:\s*|\bI (?:have|own|rostered|drafted|picked up|added)\s+", re.I)
 DROP_CUE = re.compile(r"\bI (?:dropped|cut|released|traded(?: away)?)\s+", re.I)
 NAME = re.compile(r"[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,2}")
+# A name just before "on my bench" or "in my (starting) lineup": "Pickens is in my lineup".
+SPOT_CUE = re.compile(
+    r"(?<![\w'])(?P<name>[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,2})\s+(?:(?:is|are|sits?|sitting)\s+)?"
+    r"(?:on|in)\s+my\s+(?:bench|(?:starting\s+)?lineup|roster|team)\b")
+LEADING_VERB = re.compile(r"^(?:Start|Sit|Bench|Play|Keep|Leave|Put)\s+")
 LEADING_POS = re.compile(rf"^(?:(?:and\s+)?my\s+{_POS}\s+(?:is|are)\s+|{_POS}\s+)", re.I)
 NOT_NAMES = {"who", "what", "why", "how", "should", "is", "are", "will", "can", "the"}
 
@@ -148,7 +154,10 @@ def mine_facts(text: str) -> list[Fact]:
         facts.append(Fact("scoring", "standard"))
     elif FULL.search(text):
         facts.append(Fact("scoring", "ppr"))
-    facts += [Fact("roster", n) for n in _names_after(ROSTER_CUE, text)]
+    roster = _names_after(ROSTER_CUE, text)
+    spots = [LEADING_VERB.sub("", m.group("name")) for m in SPOT_CUE.finditer(text)]
+    roster += [n for n in spots if n and n.split()[0].lower() not in NOT_NAMES]
+    facts += [Fact("roster", n) for n in dict.fromkeys(roster)]
     facts += [Fact("drop", n) for n in _names_after(DROP_CUE, text)]
     return facts
 

@@ -181,9 +181,10 @@ def to_json(run: PipelineResult, lines: list[dict[str, Any]], seconds: float) ->
         "question_type": r.question_type,
         "player": None if r.player is None else
                   {"name": r.player.name, "team": r.player.team, "position": r.player.position},
+        "players": [{"name": p.name, "team": p.team, "position": p.position} for p in r.players],
         "season_context": r.season_context,
         "factors": [{"factor": f.factor, "support": f.support, "summary": f.summary, "rated_by": f.rated_by,
-                     "rule": f.rule, "evidence": evidence(f.evidence)} for f in r.factors],
+                     "rule": f.rule, "favours": f.favours, "evidence": evidence(f.evidence)} for f in r.factors],
         "claims": [{"text": c.text, "evidence": evidence(c.evidence)} for c in r.claims],
         "not_measurable": r.not_measurable,
         "critic": {

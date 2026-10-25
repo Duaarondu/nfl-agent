@@ -34,3 +34,27 @@ def test_pickup_because_a_player_is_out_is_a_replacement_question(model):
     assert "if Evans misses time?\" is replacement, about Evans" in planner.PROMPT
     model.replies = [meterless.MeterlessError("down")]
     assert planner.plan("r1", C2) == planner.Route(None, "replacement", "keyword")
+
+
+COMPARE = ("I have Jameson Williams on my bench and George Pickens in my starting lineup, "
+           "who should I pick?")
+
+
+def test_compare_route_carries_both_names(model, trace_dir):
+    model.replies = ['{"player_name": "Jameson Williams", "player_names": ["Jameson Williams", "George Pickens"], '
+                     '"question_type": "compare"}']
+    route = planner.plan("r1", COMPARE)
+    assert route == planner.Route("Jameson Williams", "compare", "model", ("Jameson Williams", "George Pickens"))
+    assert '"compare"' in planner.PROMPT and "player_names" in planner.PROMPT
+    [handoff] = [l for l in read_trace(trace_dir) if l["action"] == "handoff"]
+    assert handoff["player_names"] == ["Jameson Williams", "George Pickens"]
+
+
+def test_names_are_dropped_for_a_single_player_type(model):
+    model.replies = ['{"player_name": "Mike Evans", "player_names": ["Mike Evans"], "question_type": "start_sit"}']
+    assert planner.plan("r1", "Should I start Mike Evans?").player_names == ()
+
+
+def test_compare_keyword_fallback(model):
+    model.replies = [meterless.MeterlessError("down")]
+    assert planner.plan("r1", COMPARE) == planner.Route(None, "compare", "keyword")

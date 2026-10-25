@@ -216,7 +216,7 @@ def test_change_claimed_after_an_injury_must_start_that_week():
     result = with_answer(WATSON, "His target share rose after Jayden Reed went out. Verdict: hold Christian Watson.")
     [issue] = issues(result, "timing")
     assert issue.blocking
-    assert issue.reason.startswith("His target share averaged 28.9 before week 3 and 18.9 from week 3 on") and "so it did not rise after Jayden Reed was first out in week 3" in issue.reason
+    assert issue.reason.startswith("His target share averaged 28.9% before week 3 and 18.9% from week 3 on") and "so it did not rise after Jayden Reed was first out in week 3" in issue.reason
 
 
 def test_change_that_was_already_there_before_the_event_is_flagged():
@@ -340,3 +340,91 @@ def test_review_is_skipped_when_the_time_is_up(review):
 def test_review_can_be_turned_off(model):
     found = critic.critique(load_example(WATSON), 1, FAR_OFF, model_review=False)
     assert found.reviewed_by == "rule-based" and not model.calls
+
+
+# --- g) compare: start exactly one of the two, as the head-to-head numbers say ---
+
+COMPARE = ("I have Jameson Williams on my bench and George Pickens in my starting lineup, "
+           "who should I pick?")
+
+
+@pytest.fixture
+def compare_result(real_sample, monkeypatch):
+    """The compare question answered on the sample slice, with every model call failing (rule-based)."""
+    from app.agents import analyst
+
+    def down(*args, **kwargs):
+        raise meterless.MeterlessError("off")
+
+    monkeypatch.setattr(analyst.meterless, "chat", down)
+    return analyst.analyze(COMPARE)
+
+
+def test_rule_based_compare_answer_passes_every_check(compare_result):
+    assert compare_result.answer.startswith("Start George Pickens over Jameson Williams")
+    assert not [i for i in critic.check_answer(compare_result) if i.blocking]
+
+
+@pytest.mark.parametrize("answer", [
+    "Start both. Pickens has 13.6 PPR points per game and Williams 11.5.",
+    "Start Mike Evans over George Pickens. Pickens has 13.6 and Williams 11.5 PPR points per game.",
+    "Sit Jameson Williams. Pickens has 13.6 and Williams 11.5 PPR points per game.",
+    "Start George Pickens and start Williams too. Pickens has 13.6 and Williams 11.5 PPR points per game.",
+])
+def test_compare_verdict_must_start_exactly_one_of_the_two(compare_result, answer):
+    compare_result.answer = answer
+    assert [i for i in issues(compare_result, "compare") if i.blocking]
+
+
+def test_compare_pick_behind_on_points_needs_the_trend_explained(compare_result):
+    compare_result.answer = ("Start Jameson Williams over George Pickens. Williams scores 11.5 PPR points "
+                             "per game to Pickens' 13.6.")
+    [issue] = issues(compare_result, "compare")
+    assert "say why Jameson Williams anyway" in issue.reason and "17.5 to 16.9" in issue.reason
+    compare_result.answer = ("Start Jameson Williams over George Pickens. Pickens has more points per game "
+                             "(13.6 to 11.5), but from week 4 on Williams scores 17.5 to Pickens' 16.9, "
+                             "so the recent trend favours Williams.")
+    assert not issues(compare_result, "compare")
+
+
+def test_compare_pick_behind_on_points_and_trend_is_blocked(compare_result):
+    trend = next(q for q in compare_result.queries if q.factor == "Recent trend")
+    col, who = trend.headers.index("late_ppr_per_game"), trend.headers.index("player")
+    for row in trend.rows:
+        if row[who] == "Jameson Williams":
+            row[col] = 12.0
+    compare_result.answer = ("Start Jameson Williams over George Pickens. Williams' recent trend: 12 "
+                             "points per game to Pickens' 13.6.")
+    [issue] = issues(compare_result, "compare")
+    assert issue.reason.startswith("The head-to-head numbers favour George Pickens")
+
+
+def test_compare_answer_quotes_numbers_for_both_players(compare_result):
+    compare_result.answer = "Start George Pickens over Jameson Williams. Pickens scores 13.6 PPR points per game."
+    [issue] = issues(compare_result, "compare")
+    assert "Quote a number for Jameson Williams" in issue.reason
+
+
+def test_compare_skips_the_single_player_verdict_support_check(compare_result):
+    compare_result.answer = ("Start Jameson Williams over George Pickens. Pickens has more points per game "
+                             "(13.6 to 11.5), but recently Williams scores 17.5 to 16.9.")
+    assert not issues(compare_result, "verdict_support")
+    assert not issues(compare_result, "question_fit")
+
+
+# --- percentages need their % sign ---
+
+
+@pytest.mark.parametrize("text, flagged", [
+    ("He has a 13.8 target share.", True),
+    ("His 13.8 recent target share leads.", True),
+    ("His target share of 13.8 leads.", True),
+    ("A snap share at 84 is high.", True),
+    ("He has a 13.8% target share.", False),
+    ("His target share of 13.8% leads.", False),
+    ("His 13.8 percent target share leads.", False),
+    ("His target share rose in week 4.", False),
+])
+def test_percentages_without_a_percent_sign_are_artifacts(text, flagged):
+    found = [what for _, what in critic._artifacts(text)]
+    assert ("a percentage without its % sign" in found) is flagged

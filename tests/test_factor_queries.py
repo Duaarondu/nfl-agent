@@ -86,6 +86,14 @@ def test_wrong_teams(question, wrong):
         ("Should I pick up a 49ers receiver if Evans misses time?", "replacement"),
         ("Who should I start if Kittle is ruled out?", "replacement"),
         ("Should I pick up Jauan Jennings?", "waiver"),
+        # Two players, full names: start which one?
+        ("I have Jameson Williams on my bench and George Pickens in my starting lineup, who should I pick?", "compare"),
+        ("Jameson Williams or George Pickens this week?", "compare"),
+        ("Jameson Williams vs George Pickens", "compare"),
+        ("Should I start Jameson Williams over George Pickens?", "compare"),
+        ("Choose between Jameson Williams and George Pickens.", "compare"),
+        ("Why is George Pickens better than Jameson Williams?", "why"),
+        ("Should I start George Pickens or bench him?", "start_sit"),
     ],
 )
 def test_guess_question_type(question, expected):
@@ -271,3 +279,61 @@ def test_planned_sql_never_orders_by_an_aggregate():
             assert not re.search(r"\b(SUM|AVG|COUNT|MIN|MAX)\(", order_by), (q.factor, order_by)
     usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]
     assert "ORDER BY targets DESC LIMIT 12" in usage.sql
+
+
+# --- compare: two players head to head ---
+
+
+def compare_results(scoring=fq.PPR):
+    players = lookup("Jameson Williams or George Pickens?")
+    results = {}
+    for p in fq.compare_bundle(players, SEASON, WEEK, scoring):
+        result = run_sql(p.sql)
+        results[p.factor] = (result["headers"], result["data"])
+    return players, results
+
+
+def test_compare_bundle_runs_for_both_players(real_sample):
+    players, results = compare_results()
+    assert [p.name for p in players] == ["Jameson Williams", "George Pickens"]
+    assert list(results) == list(fq.COMPARE_FACTORS)
+    for factor, (headers, rows) in results.items():
+        assert {r[headers.index("player")] for r in rows} == {"Jameson Williams", "George Pickens"}, factor
+    for p in fq.compare_bundle(players, SEASON, WEEK, fq.PPR):
+        assert not re.search(r"(?i)\bilike\b|\bqualify\b|::|\"|;", p.sql), p.factor
+
+
+def test_compare_summaries_name_both_and_write_percentages_with_the_sign(real_sample):
+    _, results = compare_results()
+    for factor, (headers, rows) in results.items():
+        text = " ".join(fq.summarize(factor, headers, rows))
+        assert "Pickens" in text and "Williams" in text, factor
+        assert not re.search(r"\d\s+(?:target|snap|air yards)\s+share", text), text
+    usage = " ".join(fq.summarize("Team usage share", *results["Team usage share"]))
+    assert "average target share 21.9%" in usage and "13.6 PPR points per game" in usage
+    trend = " ".join(fq.summarize("Recent trend", *results["Recent trend"]))
+    assert "7.6 PPR points per game in weeks 1-3 vs 17.5 from week 4 on" in trend
+
+
+def test_compare_ratings_are_head_to_head(real_sample):
+    _, results = compare_results()
+    assert fq.compare_rating("Weekly opportunity", results)[:2] == ("George Pickens", "strong")
+    favours, support, rule = fq.compare_rating("Team usage share", results)
+    assert (favours, support) == ("George Pickens", "strong") and "21.9% vs Jameson Williams 15.2%" in rule
+    assert fq.compare_rating("Touchdown share", results)[0] == "George Pickens"  # lower is steadier
+    assert fq.compare_rating("Recent trend", results)[:2] == ("Jameson Williams", "weak")
+    assert fq.compare_rating("Recent trend", {})[:2] == (fq.EVEN, "not supported")
+
+
+def test_compare_rule_verdict_uses_league_scoring_then_trend(real_sample):
+    players, results = compare_results(fq.SCORINGS["half"])
+    verdict, why = fq.rule_verdict("compare", players[0], results, [], players=players)
+    assert verdict == "Start George Pickens over Jameson Williams"
+    assert "half-PPR points per game" in why and "Decided by points per game." in why
+    # Level on points per game: the later weeks decide.
+    headers, rows = results["Team usage share"]
+    col = headers.index("half_ppr_per_game")
+    for row in rows:
+        row[col] = 10.0
+    verdict, why = fq.rule_verdict("compare", players[0], results, [], players=players)
+    assert verdict == "Start Jameson Williams over George Pickens" and "Decided by recent trend." in why

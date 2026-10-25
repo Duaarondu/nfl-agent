@@ -1,23 +1,28 @@
 """Queries the Analyst runs in code before the model's first turn.
 
 The player named in the question is looked up in rosters, then a fixed bundle
-of SQL runs for that player: one query per "why" factor for why-questions, or
-status, team usage and depth chart for everything else. All SQL is plain
-standard SQL that runs on both Spark SQL (Zetaris) and DuckDB (sample mode).
+of SQL runs for that player: one query per "why" factor for why-questions, one
+query per head-to-head factor (rows for both players) for a two-player "compare"
+question, or status, team usage and depth chart for everything else. All SQL is
+plain standard SQL that runs on both Spark SQL (Zetaris) and DuckDB (sample mode).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
-QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "other")
+QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "compare", "other")
 MAX_NAME_CANDIDATES = 60
 WHY_FACTORS = (
     "Opportunity", "Teammate absences", "Team pass rate and game script",
     "Big plays", "Touchdowns and red zone", "Matchups",
 )
+# Head-to-head factors for "compare" (start A or B?): each query returns rows for both players.
+COMPARE_FACTORS = ("Weekly opportunity", "Team usage share", "Recent trend", "Touchdown share", "Next matchup")
+EVEN = "even"
 
 # Team code -> lowercase names a question might use. Codes match nflverse.
 TEAM_NAMES: dict[str, tuple[str, ...]] = {
@@ -124,6 +129,8 @@ def guess_question_type(question: str) -> str:
     text = question.lower()
     if is_why_question(text):
         return "why"
+    if is_compare_question(question):
+        return "compare"
     # "Should I pick up a 49ers receiver if Evans misses time?" asks who replaces him.
     if re.search(r"\b(becomes?|replace|replaces|takes? over|next man up|wr1|rb1|te1)\b", text) or says_out(text):
         return "replacement"
@@ -132,6 +139,18 @@ def guess_question_type(question: str) -> str:
     if re.search(r"\b(pick (him )?up|waiver|add|drop|stash)\b", text):
         return "waiver"
     return "other"
+
+
+# "Pickens or Williams", "between X and Y", "who should I start": a choice between players.
+COMPARE_CUE = re.compile(
+    r"\b(?:or|vs\.?|versus|over)\b|\bbetween\b.+\band\b|\bwho should I (?:start|pick|play|choose)\b"
+    r"|\bwhich (?:one|player|of them)\b", re.I)
+FULL_NAME = re.compile(r"\b[A-Z][a-z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+)+")
+
+
+def is_compare_question(question: str) -> bool:
+    """A choice cue and at least two full names ("Jameson Williams ... George Pickens")."""
+    return COMPARE_CUE.search(question) is not None and len(set(FULL_NAME.findall(question))) >= 2
 
 
 def is_why_question(question: str) -> bool:
@@ -374,6 +393,89 @@ def games_without_query(p: Player, season: int, s: Scoring = PPR) -> PlannedQuer
     )
 
 
+def compare_bundle(players: list[Player], season: int, latest_week: int, s: Scoring = PPR) -> list[PlannedQuery]:
+    """One query per head-to-head factor, each with a row (or rows) per player."""
+    ids = ", ".join(_quote(p.player_id) for p in players)
+    names = " vs ".join(p.name for p in players)
+    pts = s.expr("ps.")
+    mid = max(1, latest_week // 2)  # weeks 1-3 vs 4-6 after week 6
+    roster = " UNION ALL ".join(
+        f"SELECT {_quote(p.player_id)} AS player_id, {_quote(p.name)} AS player, {_quote(p.team)} AS team, "
+        f"{_quote(p.position if p.position in SKILL_POSITIONS else 'WR')} AS position"
+        for p in players
+    )
+    return [
+        PlannedQuery(
+            "Weekly opportunity",
+            f"{names}: snap %, targets, target share and {s.label} points by week",
+            "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, "
+            "ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, "
+            "ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, "
+            f"ROUND({pts}, 1) AS {s.key}_points "
+            "FROM NFLVERSE.player_stats ps "
+            "LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id "
+            "AND sc.player = ps.player_display_name AND sc.team = ps.team "
+            f"WHERE ps.season = {season} AND ps.player_id IN ({ids}) ORDER BY ps.player_display_name, ps.week",
+        ),
+        PlannedQuery(
+            "Team usage share",
+            f"{names}: share of their team's targets and air yards, and {s.label} points per game",
+            "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, "
+            "ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, "
+            "ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, "
+            f"ROUND(AVG({pts}), 1) AS {s.key}_per_game "
+            f"FROM NFLVERSE.player_stats ps WHERE ps.season = {season} AND ps.player_id IN ({ids}) "
+            "GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+        ),
+        PlannedQuery(
+            "Recent trend",
+            f"{names}: {s.label} points per game and target share in weeks 1-{mid} vs {mid + 1}-{latest_week}",
+            f"SELECT ps.player_display_name AS player, {mid} AS split_week, "
+            f"SUM(CASE WHEN ps.week <= {mid} THEN 1 ELSE 0 END) AS early_games, "
+            f"SUM(CASE WHEN ps.week > {mid} THEN 1 ELSE 0 END) AS late_games, "
+            f"ROUND(AVG(CASE WHEN ps.week <= {mid} THEN {pts} END), 1) AS early_{s.key}_per_game, "
+            f"ROUND(AVG(CASE WHEN ps.week > {mid} THEN {pts} END), 1) AS late_{s.key}_per_game, "
+            f"ROUND(100 * AVG(CASE WHEN ps.week <= {mid} THEN ps.target_share END), 1) AS early_target_share_pct, "
+            f"ROUND(100 * AVG(CASE WHEN ps.week > {mid} THEN ps.target_share END), 1) AS late_target_share_pct "
+            f"FROM NFLVERSE.player_stats ps WHERE ps.season = {season} AND ps.player_id IN ({ids}) "
+            "GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+        ),
+        PlannedQuery(
+            "Touchdown share",
+            f"{names}: touchdowns and the share of {s.label} points that came from them",
+            "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, "
+            "6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, "
+            f"ROUND(SUM({pts}), 1) AS {s.key}_points, "
+            f"ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM({pts}), 0), 1) AS td_share_pct "
+            f"FROM NFLVERSE.player_stats ps WHERE ps.season = {season} AND ps.player_id IN ({ids}) "
+            "GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+        ),
+        PlannedQuery(
+            "Next matchup",
+            f"{names}: next opponent after week {latest_week} and its average {s.label} points allowed to the "
+            "position (rank 1 = most allowed)",
+            f"WITH players AS ({roster}), "
+            "games AS (SELECT home_team AS team, away_team AS opponent, week FROM NFLVERSE.schedules "
+            f"WHERE season = {season} AND week > {latest_week} "
+            "UNION ALL SELECT away_team AS team, home_team AS opponent, week FROM NFLVERSE.schedules "
+            f"WHERE season = {season} AND week > {latest_week}), "
+            "next_week AS (SELECT team, MIN(week) AS week FROM games GROUP BY team), "
+            f"allowed AS (SELECT opponent_team, position, week, SUM({s.expr()}) AS pts "
+            f"FROM NFLVERSE.player_stats WHERE season = {season} GROUP BY opponent_team, position, week), "
+            f"avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_{s.key}_allowed "
+            "FROM allowed GROUP BY opponent_team, position), "
+            f"ranked AS (SELECT opponent_team, position, avg_{s.key}_allowed, "
+            f"RANK() OVER (PARTITION BY position ORDER BY avg_{s.key}_allowed DESC) AS allowed_rank FROM avg_allowed) "
+            "SELECT p.player, p.team, p.position, n.week AS next_week, g.opponent, "
+            f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank "
+            "FROM players p JOIN next_week n ON n.team = p.team "
+            "JOIN games g ON g.team = p.team AND g.week = n.week "
+            "LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position "
+            "ORDER BY p.player",
+        ),
+    ]
+
+
 def plan(
     question_type: str, player: Player, season: int, latest_week: int, scoring: Scoring = PPR
 ) -> list[PlannedQuery]:
@@ -565,6 +667,79 @@ def _without(t: _Rows) -> list[str]:
     ]
 
 
+def _by_player(t: _Rows) -> dict[str, list[int]]:
+    """Row indexes per player, in the rows' order."""
+    out: dict[str, list[int]] = {}
+    for i, name in enumerate(t.text("player")):
+        out.setdefault(name, []).append(i)
+    return out
+
+
+def _h2h_opportunity(t: _Rows) -> list[str]:
+    lines = []
+    for name, idx in _by_player(t).items():
+        snap, share = t.col("snap_pct"), t.col("target_share_pct")
+        targets, pts = t.col("targets"), t.col(t.points)
+        lines.append(
+            f"{name}: {len(idx)} games, {_fmt(_total(targets[i] for i in idx))} targets "
+            f"({_fmt(_avg(targets[i] for i in idx))} per game), average snap share {_fmt(_avg(snap[i] for i in idx))}%, "
+            f"average target share {_fmt(_avg(share[i] for i in idx))}%, "
+            f"{_fmt(_avg(pts[i] for i in idx))} {t.scoring.label} points per game."
+        )
+        weeks = t.text("week")
+        lines.append(f"{name} {t.scoring.label} points by week: "
+                     + ", ".join(f"week {weeks[i]} {_fmt(pts[i])}" for i in idx) + ".")
+    return lines
+
+
+def _h2h_usage(t: _Rows) -> list[str]:
+    per_game = t.col(f"{t.scoring.key}_per_game")
+    return [
+        f"{name} ({team}): average target share {_fmt(share)}%, average air yards share {_fmt(air)}%, "
+        f"{_fmt(targets)} targets and {_fmt(carries)} carries in {_fmt(games)} games, "
+        f"{_fmt(ppg)} {t.scoring.label} points per game."
+        for name, team, share, air, targets, carries, games, ppg in zip(
+            t.text("player"), t.text("team"), t.col("avg_target_share_pct"), t.col("avg_air_yards_share_pct"),
+            t.col("targets"), t.col("carries"), t.col("games"), per_game)
+    ]
+
+
+def _h2h_trend(t: _Rows) -> list[str]:
+    key, label = t.scoring.key, t.scoring.label
+    split = int(t.col("split_week")[0] or 0)
+    lines = []
+    for i, name in enumerate(t.text("player")):
+        early, late = t.col(f"early_{key}_per_game")[i], t.col(f"late_{key}_per_game")[i]
+        change = None if early is None or late is None else round(late - early, 1)
+        sign = "" if change is None or change < 0 else "+"
+        lines.append(
+            f"{name}: {_fmt(early)} {label} points per game in weeks 1-{split} vs {_fmt(late)} from week "
+            f"{split + 1} on ({sign}{_fmt(change)}); target share {_fmt(t.col('early_target_share_pct')[i])}% vs "
+            f"{_fmt(t.col('late_target_share_pct')[i])}%."
+        )
+    return lines
+
+
+def _h2h_touchdowns(t: _Rows) -> list[str]:
+    return [
+        f"{name}: {_fmt(tds)} touchdown{'' if tds == 1 else 's'} = {_fmt(td)} of {_fmt(total)} {t.scoring.label} points ({_fmt(share)}% "
+        "from touchdowns)."
+        for name, tds, td, total, share in zip(t.text("player"), t.col("touchdowns"), t.col("td_points"),
+                                               t.col(t.points), t.col("td_share_pct"))
+    ]
+
+
+def _h2h_matchup(t: _Rows) -> list[str]:
+    allowed = next((h for h in t.headers if h.startswith("opp_avg_")), "")
+    return [
+        f"{name} ({team}) plays {opp} in week {week}: {opp} allow {_fmt(avg)} {t.scoring.label} points per game "
+        f"to {pos}s (rank {_fmt(rank)} of 32, 1 = most allowed)."
+        for name, team, pos, week, opp, avg, rank in zip(
+            t.text("player"), t.text("team"), t.text("position"), t.text("next_week"), t.text("opponent"),
+            t.col(allowed), t.col("allowed_rank"))
+    ]
+
+
 def _depth(t: _Rows) -> list[str]:
     return ["Depth order: " + ", ".join(f"{r}. {n}" for r, n in zip(t.text("pos_rank"), t.text("player_name"))) + "."]
 
@@ -581,12 +756,17 @@ _SUMMARIES = {
     "Team usage": _team_usage,
     "Depth chart": _depth,
     "Games without the player": _without,
+    "Weekly opportunity": _h2h_opportunity,
+    "Team usage share": _h2h_usage,
+    "Recent trend": _h2h_trend,
+    "Touchdown share": _h2h_touchdowns,
+    "Next matchup": _h2h_matchup,
 }
 
 
 # --- Rule-based ratings: the fallback when a factor agent's model call fails ---
 
-RATED_FACTORS = (*WHY_FACTORS, "Team usage", "Depth chart", "Games without the player")
+RATED_FACTORS = (*WHY_FACTORS, "Team usage", "Depth chart", "Games without the player", *COMPARE_FACTORS)
 
 
 def _grade(value: float | None, strong: float, moderate: float, weak: float) -> str:
@@ -671,6 +851,46 @@ def rule_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -
         n = int(max(missed)) if missed else 0
         return _grade(n, 3, 2, 1), f"{n} games without him (strong >= 3, moderate 2, weak 1)"
     return "not supported", "no rule for this factor"
+
+
+# (column, higher is better, strong, moderate, weak margins, what it measures) per head-to-head factor.
+_H2H_RULES = {
+    "Weekly opportunity": ("targets", True, 2, 1, 0.3, "targets per game"),
+    "Team usage share": ("avg_target_share_pct", True, 5, 2.5, 1, "average target share"),
+    "Recent trend": ("late_{key}_per_game", True, 4, 2, 0.5, "{label} points per game in the later weeks"),
+    "Touchdown share": ("td_share_pct", False, 15, 8, 3, "share of points from touchdowns, lower is steadier"),
+    "Next matchup": ("opp_avg_{key}_allowed", True, 5, 2, 0.5, "next opponent's {label} points allowed per game"),
+}
+
+
+def h2h_values(factor: str, headers: list[str], rows: list[list]) -> dict[str, float | None]:
+    """The deciding value of a head-to-head factor per player (targets per game for Weekly opportunity)."""
+    t = _Rows(headers, rows)
+    column = _H2H_RULES[factor][0].format(key=t.scoring.key)
+    by_player = _by_player(t)
+    values = t.col(column)
+    if factor == "Weekly opportunity":
+        return {name: _avg(values[i] for i in idx) for name, idx in by_player.items()}
+    return {name: values[idx[0]] for name, idx in by_player.items()}
+
+
+def compare_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -> tuple[str, str, str]:
+    """(favours: a player's name or EVEN, support, rule) for one head-to-head factor, from fixed margins."""
+    headers, rows = results.get(factor, ([], []))
+    values = h2h_values(factor, headers, rows) if rows else {}
+    known = {n: v for n, v in values.items() if v is not None}
+    column, higher, strong, moderate, weak, what = _H2H_RULES[factor]
+    label = scoring_of(headers).label
+    what = what.format(label=label)
+    if len(known) < 2:
+        return EVEN, "not supported", f"{what}: not available for both players"
+    (a, va), (b, vb) = sorted(known.items(), key=lambda kv: kv[1], reverse=higher)[:2]
+    margin = round(abs(va - vb), 1)
+    support = _grade(margin, strong, moderate, weak)
+    u = "%" if column.endswith("_pct") else ""  # a share is always written with its % sign
+    rule = (f"{what}: {a} {_fmt(va)}{u} vs {b} {_fmt(vb)}{u}; margin {_fmt(margin)}{u} "
+            f"(strong >= {_fmt(strong)}{u}, moderate >= {_fmt(moderate)}{u}, weak >= {_fmt(weak)}{u}, else even)")
+    return (EVEN if support == "not supported" else a), support, rule
 
 
 # --- Rule-based verdict: the fallback when the verdict model call fails ---
@@ -777,9 +997,43 @@ def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[li
     return f"{lead}, so for fantasy: {advice}."
 
 
+def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], list[list]]]) -> tuple[str, str]:
+    """(verdict, why): start the player with more points per game in the league's scoring;
+    within 0.5 points, the one scoring more in the later weeks (Recent trend)."""
+    usage = results.get("Team usage share", ([], []))
+    label = _scoring(results).label
+    ppg = _per_game_by_player(usage) if usage[1] else {}
+    late = h2h_values("Recent trend", *results["Recent trend"]) if results.get("Recent trend", ([], []))[1] else {}
+    names = [_row_name(p.name, ppg) for p in players]
+    (a, b) = names[:2]
+    pa, pb = ppg.get(a), ppg.get(b)
+    decided_by = "points per game"
+    if pa is None or pb is None or abs(pa - pb) < 0.5:
+        la, lb = late.get(_row_name(a, late)), late.get(_row_name(b, late))
+        start, bench = (a, b) if (la or 0) >= (lb or 0) else (b, a)
+        decided_by = "recent trend"
+        why = (f"Rule: start the player with more {label} points per game ({a} {_fmt(pa)} vs {b} {_fmt(pb)}); "
+               f"they are within 0.5, so the later weeks decide: {a} {_fmt(la)} vs {b} {_fmt(lb)} per game.")
+    else:
+        start, bench = (a, b) if pa > pb else (b, a)
+        why = f"Rule: start the player with more {label} points per game: {a} {_fmt(pa)} vs {b} {_fmt(pb)}."
+    return f"Start {start} over {bench}", f"{why} Decided by {decided_by}."
+
+
+def _per_game_by_player(usage: tuple[list[str], list[list]]) -> dict[str, float | None]:
+    t = _Rows(*usage)
+    return dict(zip(t.text("player"), t.col(f"{t.scoring.key}_per_game")))
+
+
+def _row_name(name: str, by_name: dict[str, Any]) -> str:
+    """The data's spelling of a player's name ("Deebo Samuel Sr." for "Deebo Samuel")."""
+    return next((n for n in by_name if same_player(n, name)), name)
+
+
 def rule_verdict(
     question_type: str, player: Player, results: dict[str, tuple[list[str], list[list]]],
     ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (), out: bool = False,
+    players: list[Player] | None = None,
 ) -> tuple[str, str]:
     """(verdict, why) from fixed rules; ranked is (factor, support, summary), most supported first.
 
@@ -794,7 +1048,10 @@ def rule_verdict(
     if ruled_out:
         why += f" Not supported: {', '.join(ruled_out)}."
 
-    if question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):
+    if question_type == "compare" and players and len(players) >= 2:
+        verdict, rule = compare_verdict(players, results)
+        why += f" {rule}"
+    elif question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):
         stand_in, reason = _next_up(player, results, roster)
         verdict = f"Pick up {stand_in} if available" if stand_in else f"Hold until {player.team}'s next depth chart"
         why = f"{why} {reason}" if reason else why

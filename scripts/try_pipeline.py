@@ -82,7 +82,8 @@ def report(run: PipelineResult) -> str:
     for i, f in enumerate(result.factors, 1):
         ids = ", ".join(str(e.query_id) for e in f.evidence) or "-"
         rated = f"rule-based: {f.rule}" if f.rated_by == "rule-based" else "model"
-        out.append(f"  {i}. {f.factor} [{f.support}, {rated}] (queries {ids}): {f.summary}")
+        rating = f"{f.support}" if not f.favours else ("even" if f.favours == "even" else f"favours {f.favours}, {f.support}")
+        out.append(f"  {i}. {f.factor} [{rating}, {rated}] (queries {ids}): {f.summary}")
     if result.not_measurable:
         out += ["", "Not measurable with this data:", *(f"  - {item}" for item in result.not_measurable)]
 

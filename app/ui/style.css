@@ -163,6 +163,8 @@ button {
 .support.moderate { background: #e6eefc; color: var(--accent); }
 .support.weak { background: var(--warn-bg); color: var(--warn); }
 .support.not-supported { background: #eceff3; color: var(--muted); }
+.favours { padding: 2px 9px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: #e6eefc; color: var(--accent); }
+.favours.even { background: #eceff3; color: var(--muted); }
 
 details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 12px; background: #fff; }
 details > summary { cursor: pointer; font-weight: 700; }

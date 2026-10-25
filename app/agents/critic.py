@@ -56,6 +56,7 @@ CONFIDENT_ACTIONS = ("start", "pick up", "add")
 QUESTION_ACTIONS = {
     "start_sit": ("start", "sit", "bench"),
     "waiver": ("pick up", "add", "hold off on", "stash", "drop"),
+    "compare": ("start",),
 }
 # A number on its own: not part of a word like "49ers" or "WR1".
 NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?!\w)")
@@ -64,6 +65,13 @@ ARTIFACTS = (
     (re.compile(r"\b\d+\.0\s+(?:games?|targets?|touchdowns?|TDs?|carries|receptions|catches|plays|weeks?|snaps)\b", re.I),
      "a count written with a decimal"),
     (re.compile(r"\b(?:nan|NaN|null|n/a)\b|\bNone\b(?!\s+of)"), "a missing value leaked from the data"),
+    # "13.8 target share" or "target share of 13.8": a share needs its % sign.
+    (re.compile(r"\b\d+(?:\.\d+)?(?!\s*(?:%|percent))\s+(?:(?:recent|average|team|weekly)\s+)?"
+                r"(?:target|snap|air yards|touchdown|TD)\s+share\b", re.I),
+     "a percentage without its % sign"),
+    (re.compile(r"\b(?:target|snap|air yards|touchdown|TD)\s+share\s+(?:of|is|was|at|to|from)\s+"
+                r"\d+(?:\.\d+)?(?![\d.]|\s*(?:%|percent))", re.I),
+     "a percentage without its % sign"),
 )
 TEAMMATE_EVENT = re.compile(
     r"\b(?:after|since|once|when)\s+(?P<who>[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)*)\s+"
@@ -152,6 +160,7 @@ def check_answer(result: AnalystResult) -> list[Issue]:
         *check_question_fit(result),
         *check_timing(result),
         *check_user_context(result),
+        *check_compare(result),
     ]
 
 
@@ -162,6 +171,8 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
     verdict = verdict_sentence(result.answer)
     name = recommended_name(verdict) if verdict else None
     subject = result.player.name if result.player else ""
+    if result.question_type == "compare":
+        return []  # check (g) compare tests the pick against the head-to-head numbers
     if not name or (same_player(name, subject) and result.question_type != "replacement"):
         return []  # e.g. "Start Christian Watson" about Watson himself: nothing to compare
     if _owned(result, name):
@@ -382,14 +393,15 @@ def _timing_problem(
     if not before or not after:
         return None
     b, a = _avg(before), _avg(after)
+    u = "%" if column.endswith("_pct") else ""
     direction = "rise" if rises else "fall"
     if (rises and a <= b) or (not rises and a >= b):
-        return (f"His {metric} averaged {_fmt(b)} before week {start} and {_fmt(a)} from week {start} on, "
+        return (f"His {metric} averaged {_fmt(b)}{u} before week {start} and {_fmt(a)}{u} from week {start} on, "
                 f"so it did not {direction} after {label}.")
     last_week = max(w for w in by_week if w < start)
     if (rises and before[-1] >= a) or (not rises and before[-1] <= a):
         return (f"The {direction} in his {metric} started before {label}: week {last_week} already had "
-                f"{_fmt(before[-1])}, vs {_fmt(a)} on average from week {start} on.")
+                f"{_fmt(before[-1])}{u}, vs {_fmt(a)}{u} on average from week {start} on.")
     return None
 
 
@@ -473,6 +485,94 @@ def _check_review(reply: dict[str, Any]) -> None:
 
 
 # --- helpers ---
+
+
+# --- g) compare: start exactly one of the two, as the head-to-head numbers say ---
+
+TREND_WORDS = re.compile(r"\b(?:recent(?:ly)?|later weeks|last \d+|lately|trend\w*|since week|weeks? \d+-\d+"
+                         r"|weeks? \d+ (?:to|through) \d+|momentum|matchup|opponent|allow\w*)\b", re.I)
+PPG_MARGIN = 0.5  # points per game closer than this are a tie, as in factor_queries.compare_verdict
+
+
+def check_compare(result: AnalystResult) -> list[Issue]:
+    if result.question_type != "compare" or len(result.players) < 2:
+        return []
+    verdict = verdict_sentence(result.answer) or ""
+    names = [p.name for p in result.players[:2]]
+    started = recommended_name(verdict) if _action(verdict) == "start" else None
+    pick = next((n for n in names if started and _named(n, started)), None)
+    if pick is None:
+        return [Issue("compare", "answer", verdict or result.answer,
+                      f"The verdict must start exactly one of {names[0]} and {names[1]}: \"Start <one> over <the other>\".")]
+    other = next(n for n in names if n != pick)
+    if re.search(rf"\b(?:start|play)\s+(?:both|{re.escape(name_key(other).split()[-1])})\b", _plain(verdict), re.I) \
+            or re.search(r"\bstart\s+both\b", _plain(result.answer), re.I):
+        return [Issue("compare", "answer", verdict, f"The verdict starts both players; start only one, {pick} or {other}.")]
+    issues = []
+    issues += _compare_numbers(result, pick, other)
+    issues += _quotes_both(result, names)
+    return issues
+
+
+def _compare_numbers(result: AnalystResult, pick: str, other: str) -> list[Issue]:
+    """Block a pick that trails on points per game unless the answer explains why (the
+    trend or matchup), and always one that trails on both points per game and the later weeks."""
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error}
+    usage = results.get("Team usage share", ([], []))
+    if not usage[1]:
+        return []
+    ppg = factor_queries._per_game_by_player(usage)
+    trend = results.get("Recent trend", ([], []))
+    late = factor_queries.h2h_values("Recent trend", *trend) if trend[1] else {}
+    get = lambda values, n: values.get(factor_queries._row_name(n, values))
+    p_pick, p_other = get(ppg, pick), get(ppg, other)
+    if p_pick is None or p_other is None or p_other - p_pick < PPG_MARGIN:
+        return []  # the pick leads on points per game, or they are level
+    label = factor_queries.scoring_of(usage[0]).label
+    l_pick, l_other = get(late, pick), get(late, other)
+    behind = (f"{pick} averages {_fmt(p_pick)} {label} points per game to {other}'s {_fmt(p_other)}")
+    if l_pick is None or l_other is None or l_pick <= l_other:
+        later = f", and {_fmt(l_pick)} to {_fmt(l_other)} in the later weeks" if l_pick is not None and l_other is not None else ""
+        return [Issue("compare", "answer", verdict_sentence(result.answer) or result.answer,
+                      f"The head-to-head numbers favour {other}: {behind}{later}.")]
+    if not TREND_WORDS.search(result.answer):
+        return [Issue("compare", "answer", verdict_sentence(result.answer) or result.answer,
+                      f"{behind}; say why {pick} anyway (he leads in the later weeks, "
+                      f"{_fmt(l_pick)} to {_fmt(l_other)} per game).")]
+    return []
+
+
+def _quotes_both(result: AnalystResult, names: list[str]) -> list[Issue]:
+    """The answer quotes at least one number from each player's head-to-head facts."""
+    issues = []
+    quoted = [float(v) for v in NUMBER.findall(result.answer)]
+    for name in names:
+        own = _player_numbers(result, name)
+        if not mentioned(name, result.answer) or not any(abs(v - a) < 0.051 for v in quoted for a in own):
+            issues.append(Issue("compare", "answer", result.answer,
+                                f"Quote a number for {name} too: the head-to-head needs numbers for both players."))
+    return issues
+
+
+def _player_numbers(result: AnalystResult, name: str) -> list[float]:
+    """Numbers in this player's rows, and in the computed facts that name him."""
+    out: list[float] = []
+    surname = name_key(name).split()[-1:]
+    for q in result.queries:
+        if q.error or q.factor not in factor_queries.COMPARE_FACTORS or "player" not in q.headers:
+            continue
+        i = q.headers.index("player")
+        for row in q.rows:
+            if same_player(str(row[i]), name):
+                out += [float(m) for v in row if v is not None for m in NUMBER.findall(str(v))]
+        for line in factor_queries.summarize(q.factor, q.headers, q.rows):
+            if surname and re.search(rf"\b{re.escape(surname[0])}\b", line.lower()):
+                out += [float(m) for m in NUMBER.findall(line)]
+    return out
+
+
+def _plain(text: str) -> str:
+    return text.replace("'", "").replace("\u2019", "")
 
 
 def verdict_sentence(answer: str) -> str | None:

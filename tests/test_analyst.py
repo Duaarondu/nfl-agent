@@ -387,3 +387,93 @@ def test_slow_queries_still_leave_the_factor_agents_their_minimum(real_sample, m
     analyze(WATSON_WHY)
     assert windows == [analyst.MIN_FACTOR_WINDOW]
     assert deadlines[0] - clock[0] >= analyst.VERDICT_RESERVE  # the verdict keeps its reserve too
+
+
+COMPARE = ("I have Jameson Williams on my bench and George Pickens in my starting lineup, "
+           "who should I pick?")
+PAIR = ["Jameson Williams", "George Pickens"]
+
+
+def classify_compare(names=PAIR):
+    return json.dumps({"player_name": names[0], "player_names": names, "question_type": "compare"})
+
+
+def script_compare(model, favours=None, answer=None):
+    """Like script(), for compare: head-to-head factor agents reply with favours."""
+    favours = favours or {}
+
+    def respond(messages):
+        system = messages[0]["content"]
+        if system == analyst.CLASSIFY_PROMPT:
+            return classify_compare()
+        if system == analyst.COMPARE_FACTOR_PROMPT:
+            name = re.search(r"Factor: (.+)", messages[1]["content"]).group(1)
+            reply = favours.get(name, json.dumps(
+                {"favours": "George Pickens", "support": "moderate", "summary": f"{name} facts."}))
+            return reply(messages) if callable(reply) else reply
+        if system == analyst.VERDICT_PROMPT:
+            return answer or verdict("Start George Pickens over Jameson Williams",
+                                     "Pickens scores 10.9 points per game to Williams' 9.7.")
+        raise AssertionError(f"unexpected prompt: {system[:60]}")
+
+    model.respond = respond
+
+
+def test_compare_question_looks_up_and_queries_both_players(real_sample, model):
+    script_compare(model)
+    result = analyze(COMPARE)
+    assert result.question_type == "compare"
+    assert [p.name for p in result.players] == PAIR
+    factors = [q.factor for q in result.queries]
+    assert factors == ["Player lookup", *analyst.factor_queries.COMPARE_FACTORS]
+    for q in result.queries[1:]:
+        assert not q.error, q.error
+        names = {row[q.headers.index("player")] for row in q.rows}
+        assert names == set(PAIR), q.factor
+    assert {f.favours for f in result.factors} == {"George Pickens"}
+    assert result.answer.startswith("Start George Pickens over Jameson Williams")
+
+
+def test_compare_factor_agents_see_both_players_and_must_name_one(real_sample, model, trace_dir):
+    script_compare(model, favours={"Recent trend": json.dumps(
+        {"favours": "Mike Evans", "support": "strong", "summary": "x"})})
+    result = analyze(COMPARE)
+    prompts = calls_for(model, analyst.COMPARE_FACTOR_PROMPT)
+    assert len(prompts) >= 5 and all("Players:" in c[1]["content"] for c in prompts)
+    trend = next(f for f in result.factors if f.factor == "Recent trend")
+    assert trend.rated_by == "rule-based"  # Mike Evans is not one of the two, twice
+    assert trend.favours in (*PAIR, "even")
+    lines = [l for l in read_trace(trace_dir) if l["action"] == "rate_factor"]
+    assert all("favours" in l for l in lines)
+
+
+def test_compare_in_league_scoring(real_sample, model):
+    from app.agents.memory import UserContext
+
+    script_compare(model)
+    result = analyze(COMPARE, memory=UserContext(user_id="t", scoring="half"))
+    usage = next(q for q in result.queries if q.factor == "Team usage share")
+    assert "half_ppr_per_game" in usage.headers
+
+
+def test_compare_rule_verdict_when_the_model_fails(real_sample, model):
+    script_compare(model, answer=json.dumps({"nope": 1}))
+    result = analyze(COMPARE)
+    assert result.verdict_by == "rule-based"
+    assert re.match(r"Start (Jameson Williams|George Pickens) over (Jameson Williams|George Pickens)",
+                    result.answer)
+
+
+def test_compare_with_one_player_found_falls_back_to_start_sit(real_sample, model):
+    def respond(messages):
+        system = messages[0]["content"]
+        if system == analyst.CLASSIFY_PROMPT:
+            return classify_compare(["George Pickens", "Nobody Atall"])
+        if system == analyst.FACTOR_PROMPT:
+            return rating()
+        return verdict("Start him")
+
+    model.respond = respond
+    result = analyze("Should I start George Pickens or Nobody Atall?")
+    assert result.question_type == "start_sit"
+    assert result.player.name == "George Pickens"
