@@ -31,7 +31,8 @@ from app.agents.factor_queries import name_key, same_player, sentences
 from app.trace import trace
 
 AGENT_NAME = "critic"
-REVIEW_MAX_TOKENS = 4096
+REVIEW_MAX_TOKENS = 8192
+REVIEW_TIMEOUT = 90  # the run budget (pipeline.RUN_BUDGET) still caps it
 MAX_MODEL_ISSUES = 3
 
 REVIEW_PROMPT = """\
@@ -405,7 +406,7 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
     ]
     reply = analyst._ask_json(
         result.run_id, "review", messages, REVIEW_MAX_TOKENS, _check_review,
-        agent_name=AGENT_NAME, timeout=analyst.CALL_TIMEOUT, deadline=deadline,
+        agent_name=AGENT_NAME, timeout=REVIEW_TIMEOUT, deadline=deadline,
     )
     issues = []
     answer = _squash(result.answer)

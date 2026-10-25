@@ -44,10 +44,12 @@ MODEL_PARAMS = {"temperature": 0.2, "chat_template_kwargs": {"enable_thinking": 
 # The model still thinks before replying; these leave room for that plus the JSON.
 FACTOR_MAX_TOKENS = 4096
 VERDICT_MAX_TOKENS = 4096
+REVISE_MAX_TOKENS = 8192  # a revision's prompt is longer, and the model thinks through it
 # Time limits (seconds). Each model request times out on its own; the factor agents
 # share one window, and whatever is left of the total goes to the verdict call.
 CALL_TIMEOUT = 60
 CLASSIFY_TIMEOUT = planner.TIMEOUT
+REVISE_TIMEOUT = 90  # the critic's revision call; the run budget (pipeline.RUN_BUDGET) still caps it
 TOTAL_BUDGET = 150
 FACTOR_WINDOW = 85
 VERDICT_RESERVE = 45
@@ -505,8 +507,9 @@ def _model_verdict(
         {"role": "user", "content": content},
     ]
     return _ask_json(
-        run_id, "revise" if revision else "verdict", messages, VERDICT_MAX_TOKENS, _check_verdict,
-        timeout=CALL_TIMEOUT, deadline=deadline,
+        run_id, "revise" if revision else "verdict", messages,
+        REVISE_MAX_TOKENS if revision else VERDICT_MAX_TOKENS, _check_verdict,
+        timeout=REVISE_TIMEOUT if revision else CALL_TIMEOUT, deadline=deadline,
     )
 
 

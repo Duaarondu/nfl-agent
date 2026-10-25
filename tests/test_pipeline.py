@@ -65,6 +65,21 @@ def test_flagged_verdict_is_revised_then_approved(real_sample, model, trace_dir)
     ]
 
 
+def test_review_and_revise_get_90s_and_8192_tokens(real_sample, model):
+    script(model, [SAMUEL], revised=[KITTLE])
+    pipeline.answer(BUCS)
+    by_step = {}
+    for c, k in zip(model.calls, model.kwargs):
+        step = "revise" if "A critic checked it" in c[-1]["content"] else c[0]["content"]
+        by_step.setdefault(step, []).append(k)
+    review, revise = by_step[critic.REVIEW_PROMPT][0], by_step["revise"][0]
+    verdict = by_step[analyst.VERDICT_PROMPT][0]
+    assert (review["timeout"], review["max_tokens"]) == (90, 8192)
+    assert (revise["timeout"], revise["max_tokens"]) == (90, 8192)
+    assert (verdict["timeout"], verdict["max_tokens"]) == (60, 4096)  # the first verdict is unchanged
+    assert pipeline.RUN_BUDGET == 300
+
+
 def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, trace_dir):
     script(model, [SAMUEL])  # every revision repeats the flagged verdict
     run = pipeline.answer(BUCS)
