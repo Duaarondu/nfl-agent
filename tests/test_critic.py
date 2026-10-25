@@ -134,6 +134,26 @@ def test_why_answer_with_the_explanation_first_passes():
     assert not issues(result, "question_fit")
 
 
+@pytest.mark.parametrize("question_type, answer", [
+    # Live CLI run 93e85a819afd (2026-10-25): the model wrote the action with no player.
+    ("why", "He averages 22.2% target share and 19.8 PPR points per game. Verdict: start."),
+    ("why", "His 6 touchdowns explain it. Verdict: Hold"),
+    ("start_sit", "Start. He averages 19.8 PPR points per game."),
+    ("waiver", "Pick up. His target share is 22.2%."),
+])
+def test_verdict_must_name_a_player(question_type, answer):
+    result = with_answer(WATSON, answer)
+    result.question_type = question_type
+    [issue] = issues(result, "question_fit")
+    assert issue.blocking and "names no player" in issue.reason
+
+
+def test_named_verdicts_pass_the_name_check():
+    for answer in ("His 6 touchdowns explain it. Verdict: start Christian Watson.",
+                   "His 6 touchdowns explain it. Verdict: hold Watson."):
+        assert not issues(with_answer(WATSON, answer), "question_fit")
+
+
 @pytest.mark.parametrize("answer, problem", [
     ("Hold Mike Evans. He is only questionable.", "the player who is out"),
     ("Hold until SF's next depth chart. No data.", "names no player"),

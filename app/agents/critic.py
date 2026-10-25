@@ -6,7 +6,8 @@ Code checks, each giving an issue with its reason and numbers:
                    always blocks, even if the answer names that teammate
   numbers          every number in the answer is in the query rows or in facts code computed from them
   artifacts        no leaked prompt labels ("[strong]"), "0.0 games" counts or missing values
-  question_fit     the answer fits the question type (a "why" answer explains first)
+  question_fit     the answer fits the question type (a "why" answer explains first),
+                   and its verdict names a player ("Verdict: start." blocks)
   timing           "after X got hurt" / "since week N" changes really start that week
   user_context     with league memory: no pickup of a player already on the user's
                    roster, and points quoted in the league's scoring (not "PPR" in a
@@ -261,6 +262,12 @@ def check_question_fit(result: AnalystResult) -> list[Issue]:
     parts = sentences(result.answer)
     first = parts[0] if parts else ""
     qt = result.question_type
+    verdict = verdict_sentence(result.answer)
+    if verdict is not None and qt != "replacement":  # replacement has its own stand-in check below
+        action = _action(verdict)
+        if action and not recommended_name(verdict):
+            return [Issue("question_fit", "answer", verdict,
+                          f"The verdict '{verdict.rstrip('.')}' names no player; say who to {action}.")]
     if qt == "why":
         if _action(first):
             return [Issue("question_fit", "answer", first,
@@ -460,8 +467,9 @@ def _named(full: str, given: str) -> bool:
 
 
 def _action(sentence: str) -> str | None:
-    lower = sentence.lower()
-    return next((a for a in ACTIONS if lower.startswith(a + " ")), None)
+    lower = sentence.lower().strip()
+    bare = lower.rstrip(".!").strip()  # "Start." on its own is an action with no player
+    return next((a for a in ACTIONS if lower.startswith(a + " ") or bare == a), None)
 
 
 def _table(result: AnalystResult, factor: str):
