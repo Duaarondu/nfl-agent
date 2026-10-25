@@ -11,3 +11,8 @@ vs rule-based (runs from before that header was added do not).
   are the Nightshift preset comparison runs (default vs "Highest quality"); in the second,
   slow live queries left the factor agents a 16s window, which led to the guaranteed
   60s minimum (analyst.MIN_FACTOR_WINDOW).
+- `should-i-pick-up-a-49ers-receiver-if-evans-misses-time/20261025-163512-994c234341e5`
+  answered "Pick up Mike Evans" (the player who is out) and was approved; it led to the
+  replacement routing for "if <player> misses time" and critic check (d)'s out-player rule.
+  It and the Bucs and league-memory runs from the same batch (ddb115ab07ae, 03f78201f109)
+  predate the "<depth chart pick> is next ..., so for fantasy: ..." answer shape.
