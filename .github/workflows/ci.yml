@@ -33,7 +33,7 @@ jobs:
         run: docker build -t nfl-agent .
 
       - name: Run it with no env file
-        run: docker run -d --name agent -p 8000:8000 nfl-agent
+        run: docker run -d --name agent -p 8000:8000 -p 8080:8080 nfl-agent
 
       - name: GET /health
         run: |
@@ -48,7 +48,7 @@ jobs:
         run: |
           curl -sS --max-time 300 -X POST http://localhost:8000/run \
             -H "Content-Type: application/json" \
-            -d '{"question": "Why is Christian Watson scoring so many fantasy points this season?"}' \
+            -d '{"question": "Why is Christian Watson scoring so many fantasy points this season?", "run_id": "0000c1c1c1c1"}' \
             -o run.json -w "HTTP %{http_code}\n"
           jq '{run_id, answer, approved, steps, timings: .timings.total_ms}' run.json
           jq -e '(.answer | type == "string" and length > 0)
@@ -57,6 +57,22 @@ jobs:
                  and (.factors | length) > 0
                  and (.claims | length) > 0
                  and .steps.final_verdict == "rule-based"' run.json
+
+      - name: GET /trace/<run_id> for that run
+        run: |
+          curl -fsS http://localhost:8000/trace/0000c1c1c1c1 -o trace.json
+          jq '{done, status, lines: (.lines | length)}' trace.json
+          jq -e '.done == true and .status == 200 and (.lines | length) > 0
+                 and (.lines | map(.action) | index("final")) != null' trace.json
+
+      - name: The web UI loads on port 8080 and may call the API
+        run: |
+          curl -fsS http://localhost:8080/ -o ui.html
+          grep -q "<title>NFL Fantasy Agent</title>" ui.html
+          curl -fsS http://localhost:8080/app.js | grep -q "/trace/"
+          curl -fsS http://localhost:8080/config.js | grep -q '"apiPort": 8000'
+          curl -sS -D - -o /dev/null -H "Origin: http://localhost:8080" http://localhost:8000/health \
+            | grep -i "access-control-allow-origin: http://localhost:8080"
 
       - name: Container logs
         if: always()

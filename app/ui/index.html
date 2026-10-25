@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NFL Fantasy Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <div>
+        <h1>NFL Fantasy Agent</h1>
+        <p class="tagline">Planner, Analyst and Critic agents answer from nflverse data, and the Critic checks every claim before you see it.</p>
+      </div>
+      <div class="badges" id="badges">
+        <span class="badge muted">Checking the API…</span>
+      </div>
+    </div>
+    <div class="wrap powered">
+      <span class="powered-label">Powered by</span>
+      <span class="sponsor zetaris">Zetaris <small>data</small></span>
+      <span class="sponsor nightshift">Meterless Nightshift <small>model runtime</small></span>
+      <span class="sponsor nemotron">NVIDIA Nemotron <small>model</small></span>
+      <span class="sponsor hmem">Meterless H-MEM <small>memory</small></span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card ask">
+      <form id="ask-form">
+        <label for="question">Your question</label>
+        <textarea id="question" rows="2" maxlength="500" required
+                  placeholder="Who becomes the Bucs' WR1 if Mike Evans is out?"></textarea>
+        <div class="ask-row">
+          <div class="user-field">
+            <label for="user-id">User ID <small>(optional: turns on league memory)</small></label>
+            <input id="user-id" maxlength="64" pattern="[A-Za-z0-9_\-]{1,64}" placeholder="e.g. demo">
+          </div>
+          <button type="submit" id="ask-button">Ask</button>
+        </div>
+        <div class="chips" aria-label="Example questions">
+          <span class="chips-label">Try:</span>
+          <button type="button" class="chip"
+                  data-question="Why is Christian Watson scoring so many fantasy points this season?">Watson: why so many points?</button>
+          <button type="button" class="chip"
+                  data-question="Who becomes the Bucs' WR1 if Mike Evans is out?">Bucs WR1 if Evans is out (wrong team)</button>
+          <button type="button" class="chip" data-user="demo"
+                  data-question="12-team half-PPR, my TE is George Kittle and my WR is Davante Adams. Who becomes the Bucs' WR1 if Mike Evans is out?">Half-PPR league memory (user demo)</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="error" class="card error" hidden></section>
+
+    <!-- The result goes above the timeline: the final answer is the first thing after a run. -->
+    <section id="result" hidden></section>
+
+    <section id="progress" class="card" hidden>
+      <div class="section-head">
+        <h2>Live progress</h2>
+        <div class="run-meta">
+          <span id="run-status" class="pill running">Running</span>
+          <span id="elapsed" class="elapsed">0.0s</span>
+        </div>
+      </div>
+      <p class="run-id">Run <code id="run-id"></code> · <a id="download" href="#" download>Download trace (JSONL)</a></p>
+      <ol id="timeline" class="timeline"></ol>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    Data: nflverse (CC-BY 4.0) and FTN Data via nflverse (CC-BY-SA 4.0). Informational only, not betting advice.
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
