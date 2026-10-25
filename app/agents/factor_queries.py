@@ -694,7 +694,8 @@ def _next_up(
         share = t.col("avg_target_share_pct")
         best = max(missed, key=lambda i: share[i] or 0)
         name = t.text("player_display_name")[best]
-        return name, f"{name} had the top target share ({_fmt(share[best])}%) in the games {player.name} missed."
+        reason = f"{name} had the top target share ({_fmt(share[best])}%) in the games {player.name} missed."
+        return name, reason + _per_game(t, best, "in those games")
     u = _Rows(*results.get("Team usage", ([], [])))
     recent = u.col("recent_target_share_pct")
     others = [i for i, n in enumerate(u.text("player_display_name")) if not skip(n) and recent[i] is not None]
@@ -703,10 +704,17 @@ def _next_up(
         name, pos = u.text("player_display_name")[best], u.text("position")[best]
         among = "his teammates not already on your roster" if exclude else "his teammates"
         reason = f"{name} ({pos}) has the top recent target share among {among} ({_fmt(recent[best])}%)."
+        reason += _per_game(u, best, "this season")
         if depth and not same_player(depth[0], name):
             reason += f" The depth chart lists {depth[0]} next at {player.position}."
         return name, reason
     return (depth[0], f"{depth[0]} is next on the depth chart.") if depth else (None, "")
+
+
+def _per_game(t: _Rows, i: int, when: str) -> str:
+    """" He averages 15.6 half-PPR points per game this season." from a *_per_game column."""
+    value = t.col(f"{t.scoring.key}_per_game")[i]
+    return f" He averages {_fmt(value)} {t.scoring.label} points per game {when}." if value is not None else ""
 
 
 def _usage(player: Player, results, column: str) -> float | None:

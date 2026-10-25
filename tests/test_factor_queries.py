@@ -219,7 +219,8 @@ def test_rule_verdicts(real_sample):
     assert verdict == "Pick up Davante Adams if available"
     assert why == (
         "Most supported by the data: Games without the player (moderate): He missed 2 team games this season. "
-        "Davante Adams had the top target share (29.9%) in the games Puka Nacua missed."
+        "Davante Adams had the top target share (29.9%) in the games Puka Nacua missed. "
+        "He averages 30.1 PPR points per game in those games."
     )
 
     usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]
