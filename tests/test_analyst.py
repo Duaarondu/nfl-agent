@@ -69,7 +69,8 @@ def test_why_question_runs_one_agent_per_factor_then_verdict(real_sample, model)
     assert len(calls_for(model, analyst.CLASSIFY_PROMPT)) == 1
     assert len(calls_for(model, analyst.FACTOR_PROMPT)) == 6
     assert len(calls_for(model, analyst.VERDICT_PROMPT)) == 1
-    assert result.answer == "Hold Christian Watson. His 22.2% target share leads the team."
+    # A why question: the explanation first, the action last.
+    assert result.answer == "His 22.2% target share leads the team. Verdict: hold Christian Watson."
     assert result.verdict_by == "model"
     assert result.disclaimer == analyst.DISCLAIMER
     assert [(f.factor, f.support) for f in result.factors] == [
@@ -247,7 +248,7 @@ def test_verdict_repaired_once(real_sample, model):
     bad_action = json.dumps({"verdict": "Deebo is the guy", "why": "x"})
     script(model, classify("Christian Watson", "why"), answer=[bad_action, verdict("Sit him", "Usage fell.")])
     result = analyze(WATSON_WHY)
-    assert (result.answer, result.verdict_by) == ("Sit him. Usage fell.", "model")
+    assert (result.answer, result.verdict_by) == ("Usage fell. Verdict: sit him.", "model")
     assert "must start with one of" in calls_for(model, analyst.VERDICT_PROMPT)[-1][-1]["content"]
 
 
@@ -260,8 +261,9 @@ def test_failed_verdict_falls_back_to_rules(real_sample, model, trace_dir, failu
     result = analyze(WATSON_WHY)
 
     assert result.verdict_by == "rule-based"
-    assert result.answer.startswith(
-        "Hold Christian Watson. Most supported by the data: Opportunity (strong): Target share 22.2%;"
+    assert result.answer.startswith("Most supported by the data: Opportunity (strong): Target share 22.2%;")
+    assert result.answer.endswith(
+        "Verdict: hold Christian Watson. (Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
     )
     assert "Not supported: Matchups." in result.answer
     assert "(Rule-based verdict: the verdict model call failed" in result.answer
@@ -274,7 +276,10 @@ def test_failed_verdict_falls_back_to_rules(real_sample, model, trace_dir, failu
 def test_rule_based_replacement_verdict_names_the_stand_in(real_sample, model):
     script(model, classify("Mike Evans", "replacement"), answer=meterless.MeterlessError("down"))
     result = analyze(BUCS)
-    assert result.answer.startswith("Pick up Deebo Samuel if available.")
+    # Kittle's 24.9% recent target share beats Samuel's 11.1%; the depth chart's pick is still named.
+    assert result.answer.startswith("Pick up George Kittle if available.")
+    assert "George Kittle (TE) has the top recent target share among his teammates (24.9%)." in result.answer
+    assert "The depth chart lists Deebo Samuel next at WR." in result.answer
 
 
 def test_thinking_and_fences_are_ignored(real_sample, model):
@@ -282,7 +287,7 @@ def test_thinking_and_fences_are_ignored(real_sample, model):
         model, "<think>{not json}</think>" + classify("Christian Watson", "why"),
         answer='<think>maybe {"x": 1}</think>\n```json\n' + verdict("Start him", "Big week.") + "\n```",
     )
-    assert analyze(WATSON_WHY).answer == "Start him. Big week."
+    assert analyze(WATSON_WHY).answer == "Big week. Verdict: start him."
 
 
 def test_trace_lines_have_required_fields(real_sample, model, trace_dir):

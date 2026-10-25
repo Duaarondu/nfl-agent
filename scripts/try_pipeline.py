@@ -1,7 +1,9 @@
-"""Run the Analyst live (Meterless model, sample-mode data): python scripts/try_analyst.py ["question"]
+"""Run one question end to end through app/pipeline.py (Analyst, then the Critic loop),
+with the live Meterless model and sample-mode data: python scripts/try_pipeline.py ["question"]
 
 A successful run is saved to examples/<question-slug>/<timestamp>-<run_id>/:
-answer.md (what is printed), result.json (the full result) and trace.jsonl.
+answer.md (what is printed: the answer before and after the critic, each critic round
+and its issues), result.json (the full result) and trace.jsonl.
 """
 
 from __future__ import annotations
@@ -20,7 +22,8 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ["SAMPLE_MODE"] = "true"  # data from data/sample/; the model call is live
 
 from app import trace as trace_module  # noqa: E402
-from app.agents.analyst import AnalystError, AnalystResult, analyze  # noqa: E402
+from app.agents.analyst import AnalystError  # noqa: E402
+from app.pipeline import PipelineResult, answer  # noqa: E402
 
 DEFAULT_QUESTION = "Why is Christian Watson scoring so many fantasy points this season?"
 EXAMPLES_DIR = REPO_ROOT / "examples"
@@ -38,15 +41,28 @@ def rows_text(headers: list[str], rows: list[list], limit: int = 20) -> list[str
     return lines
 
 
-def report(result: AnalystResult, seconds: float) -> str:
+def report(run: PipelineResult) -> str:
+    result = run.result
     out = [
         f"Question: {result.question}",
-        f"Run {result.run_id}: {len(result.queries)} queries, {seconds:.1f}s",
+        f"Run {result.run_id}: {len(result.queries)} queries, {len(run.critiques)} critic rounds, {run.seconds:.1f}s",
         result.season_context,
     ]
     if result.premise_correction:
         out += ["", f"Premise correction: {result.premise_correction}"]
-    out += ["", f"Answer ({result.verdict_by} verdict):", result.answer, "", f"_{result.disclaimer}_"]
+    out += ["", "Answer before the critic:", run.first_answer]
+
+    out += ["", "Critic rounds:"]
+    for c in run.critiques:
+        out.append(f"  Round {c.round}: {c.status} (review: {c.reviewed_by}), "
+                   f"{len(c.blocking)} blocking of {len(c.issues)} issues")
+        for i in c.issues:
+            kind = "blocking" if i.blocking else "recorded"
+            out.append(f"    - [{kind}] {i.check} in {i.where}: {i.reason}")
+            out.append(f"      claim: {i.claim}")
+
+    status = "approved" if run.approved else f"unresolved after {len(run.critiques)} rounds"
+    out += ["", f"Final answer ({status}; {result.verdict_by} verdict):", result.answer, "", f"_{result.disclaimer}_"]
 
     out += ["", "Factors (most to least supported):"]
     for i, f in enumerate(result.factors, 1):
@@ -76,12 +92,13 @@ def trace_lines(run_id: str) -> list[str]:
     return lines
 
 
-def save(result: AnalystResult, text: str) -> Path:
+def save(run: PipelineResult, text: str) -> Path:
+    result = run.result
     folder = EXAMPLES_DIR / slug(result.question) / f"{datetime.now():%Y%m%d-%H%M%S}-{result.run_id}"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "answer.md").write_text(f"```\n{text}\n```\n", encoding="utf-8")
     (folder / "result.json").write_text(
-        json.dumps(dataclasses.asdict(result), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(dataclasses.asdict(run), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (folder / "trace.jsonl").write_text("\n".join(trace_lines(result.run_id)) + "\n", encoding="utf-8")
     return folder
@@ -93,14 +110,14 @@ def main() -> int:
     print(f"Question: {question}\n--- trace ---")
     started = time.perf_counter()
     try:
-        result = analyze(question)
+        run = answer(question)
     except AnalystError as error:
         print(f"FAILED after {time.perf_counter() - started:.1f}s: {error}")
         return 1
 
-    text = report(result, time.perf_counter() - started)
+    text = report(run)
     print(f"\n--- result ---\n{text}")
-    print(f"\nSaved to {save(result, text).relative_to(REPO_ROOT)}")
+    print(f"\nSaved to {save(run, text).relative_to(REPO_ROOT)}")
     return 0
 
 

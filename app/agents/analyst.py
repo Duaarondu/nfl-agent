@@ -211,6 +211,9 @@ class AnalystResult:
     season_context: str
     verdict_by: str = "model"  # "model" or "rule-based" (the verdict call failed)
     disclaimer: str = DISCLAIMER
+    question_type: str = "other"
+    player: factor_queries.Player | None = None
+    asked: str = ""  # the question the agents answered, with any wrong premise corrected
 
     @property
     def queries_used(self) -> int:
@@ -270,8 +273,31 @@ def analyze(question: str, run_id: str | None = None, free_sql: bool | None = No
     # The agents get the question with its wrong premise already corrected from the data.
     asked = plan.corrected_question(question)
     factors = _rate_factors(run_id, asked, plan, window=window)
-    verdict = _verdict(run_id, asked, context, plan, factors, deadline=deadline)
-    return _assemble(run_id, question, context, plan, factors, verdict, started)
+    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors)
+    verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline)
+    return _assemble(run_id, question, asked, context, plan, factors, verdict, started)
+
+
+def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, round: int) -> None:
+    """Rerun only the verdict step, with the critic's issues in the prompt; updates result.
+
+    The factor agents are not rerun. If the call fails, the rule-based verdict is used.
+    """
+    if result.player is None:  # free-SQL answers have no planned facts to re-verdict from
+        trace(result.run_id, AGENT_NAME, "revise", "skipped", target_agent="critic", round=round,
+              reason="no planned factor queries")
+        return
+    facts = _verdict_facts(
+        result.asked or result.question, result.season_context, result.premise_correction,
+        result.queries, result.factors,
+    )
+    answer, by = _verdict(
+        result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
+        deadline=deadline, revision=(result.answer, issues),
+    )
+    result.answer, result.verdict_by = answer, by
+    trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
+          round=round, verdict_by=by, issues=len(issues))
 
 
 def _player_line(plan: Plan) -> str:
@@ -360,28 +386,45 @@ def _check_rating(reply: dict[str, Any]) -> None:
 
 
 def _verdict(
-    run_id: str, question: str, context: str, plan: Plan, factors: list[Factor], deadline: float
+    run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
+    queries: list[QueryRecord], factors: list[Factor], deadline: float,
+    revision: tuple[str, list[str]] | None = None,
 ) -> tuple[str, str]:
-    """(answer, verdict_by): the model's verdict, or the code rules' if that call fails."""
+    """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
+
+    revision is (previous answer, critic issues) when the critic sent the answer back.
+    """
+    note = ""
     try:
-        reply = _model_verdict(run_id, question, context, plan, factors, deadline)
+        reply = _model_verdict(run_id, facts, deadline, revision)
         verdict, why, by = reply["verdict"], reply["why"], "model"
     except AnalystError as error:
-        results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error}
+        results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
         ranked = [(f.factor, f.support, f.summary) for f in factors]
-        verdict, why = factor_queries.rule_verdict(plan.question_type, plan.player, results, ranked)
-        why += " (Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
+        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked)
+        note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
         by = "rule-based"
-        trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict, reason=str(error)[:300])
-    return round_numbers(_compose(verdict, why)), by
+        trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
+              step="revise" if revision else "verdict", reason=str(error)[:300])
+    return round_numbers(_compose(question_type, verdict, why, note)), by
 
 
-def _compose(verdict: str, why: str) -> str:
-    """'Pick up Deebo Samuel.' + ' ' + 'He ...' with sentence case and one period."""
+def _compose(question_type: str, verdict: str, why: str, note: str = "") -> str:
+    """Join verdict and why with sentence case and one period each.
+
+    A "why" question gets the explanation first and the action last
+    ("He ... Verdict: hold Christian Watson."); every other type leads with the action.
+    """
     verdict, why = verdict.strip().rstrip(".").strip(), why.strip()
-    verdict = verdict[:1].upper() + verdict[1:]
     why = why[:1].upper() + why[1:]
-    return f"{verdict}. {why}" if why else f"{verdict}."
+    if why and not why.endswith((".", "!", "?")):
+        why += "."
+    if question_type == "why" and why:
+        text = f"{why} Verdict: {verdict[:1].lower() + verdict[1:]}."
+    else:
+        verdict = verdict[:1].upper() + verdict[1:]
+        text = f"{verdict}. {why}" if why else f"{verdict}."
+    return f"{text} {note}" if note else text
 
 
 def _check_verdict(reply: dict[str, Any]) -> None:
@@ -392,30 +435,44 @@ def _check_verdict(reply: dict[str, Any]) -> None:
         raise ValueError("needs a non-empty 'why' string")
 
 
-def _model_verdict(
-    run_id: str, question: str, context: str, plan: Plan, factors: list[Factor], deadline: float
-) -> dict[str, Any]:
+def _verdict_facts(
+    question: str, context: str, premise_note: str | None, queries: list[QueryRecord], factors: list[Factor]
+) -> list[str]:
     lines = [context, f"Question: {question}"]
-    note = plan.premise_note()
-    if note:
-        lines.append(f"Premise check: {note}")
-    lines.append(f"Player: {_summary(plan.queries[0])}")
-    status = next((q for q in plan.queries if q.factor == "Status"), None)
+    if premise_note:
+        lines.append(f"Premise check: {premise_note}")
+    lines.append(f"Player: {_summary(queries[0])}")
+    status = next((q for q in queries if q.factor == "Status"), None)
     if status:
         lines.append(f"Injury status: {_summary(status)}")
     lines.append("Rated factors (most supported first):")
     lines += [f"- {f.factor} [{f.support}]: {f.summary}" for f in factors]
+    return lines
+
+
+def _model_verdict(
+    run_id: str, facts: list[str], deadline: float, revision: tuple[str, list[str]] | None = None
+) -> dict[str, Any]:
+    content = "\n".join(facts)
+    if revision:
+        previous, issues = revision
+        content += (
+            f"\n\nYour previous answer:\n{previous}\n"
+            "A critic checked it against the data and found these problems. Fix every one "
+            "and keep what was right:\n" + "\n".join(f"- {issue}" for issue in issues)
+        )
     messages = [
         {"role": "system", "content": VERDICT_PROMPT},
-        {"role": "user", "content": "\n".join(lines)},
+        {"role": "user", "content": content},
     ]
     return _ask_json(
-        run_id, "verdict", messages, VERDICT_MAX_TOKENS, _check_verdict, timeout=CALL_TIMEOUT, deadline=deadline
+        run_id, "revise" if revision else "verdict", messages, VERDICT_MAX_TOKENS, _check_verdict,
+        timeout=CALL_TIMEOUT, deadline=deadline,
     )
 
 
 def _assemble(
-    run_id: str, question: str, context: str, plan: Plan,
+    run_id: str, question: str, asked: str, context: str, plan: Plan,
     factors: list[Factor], verdict: tuple[str, str], started: float,
 ) -> AnalystResult:
     """Claims are the code-computed facts of each query that bears on the answer."""
@@ -437,6 +494,9 @@ def _assemble(
         queries=plan.queries,
         season_context=context,
         verdict_by=verdict_by,
+        question_type=plan.question_type,
+        player=plan.player,
+        asked=asked,
     )
     trace(
         run_id, AGENT_NAME, "answer", "ok", duration_ms=_ms(started),
@@ -809,6 +869,8 @@ def _build_result(
         not_measurable=[str(x) for x in action.get("not_measurable") or []],
         queries=queries,
         season_context=context,
+        question_type=plan.question_type,
+        asked=plan.corrected_question(question),
     )
     trace(
         run_id, AGENT_NAME, "answer", "ok",

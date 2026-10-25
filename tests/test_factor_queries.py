@@ -177,6 +177,19 @@ def without_results(name):
     return player, {p.factor: (result["headers"], result["data"])}
 
 
+def test_sentences_keep_name_suffixes_and_numbered_lists_whole():
+    assert fq.sentences("Deebo Samuel Sr. (WR) 11.1%. Depth order: 1. Mike Evans, 2. Deebo Samuel. Longest 81. Done.") == [
+        "Deebo Samuel Sr. (WR) 11.1%.", "Depth order: 1. Mike Evans, 2. Deebo Samuel.", "Longest 81.", "Done.",
+    ]
+
+
+def test_same_player_ignores_suffixes_case_and_apostrophes():
+    assert fq.same_player("Deebo Samuel Sr.", "deebo samuel")
+    assert fq.same_player("De'Zhaun Stribling", "DeZhaun Stribling")
+    assert not fq.same_player("Deebo Samuel", "Samuel")
+    assert not fq.same_player("", "")
+
+
 def test_games_without_the_player_splits_teammates_targets(real_sample):
     player, results = without_results("Puka Nacua")  # missed 2 of LA's 6 games
     headers, rows = results["Games without the player"]
@@ -204,7 +217,10 @@ def test_rule_verdicts(real_sample):
     ranked = [("Games without the player", "moderate", "He missed 2 team games this season. More.")]
     verdict, why = fq.rule_verdict("replacement", nacua, results, ranked)
     assert verdict == "Pick up Davante Adams if available"
-    assert why == "Most supported by the data: Games without the player (moderate): He missed 2 team games this season."
+    assert why == (
+        "Most supported by the data: Games without the player (moderate): He missed 2 team games this season. "
+        "Davante Adams had the top target share (29.9%) in the games Puka Nacua missed."
+    )
 
     usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]
     result = run_sql(usage.sql)

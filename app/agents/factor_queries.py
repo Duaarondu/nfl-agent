@@ -618,28 +618,64 @@ START_PPR = 12.0  # PPR per game at or above which a start/sit rule says start
 PICKUP_SHARE = 15.0  # recent target share (%) at or above which a waiver rule says pick up
 
 
+# A sentence ends at . ! or ? before a capital or "(", but not after "Sr." / "Jr." or a
+# numbered-list marker (": 1." / ", 2." as in "Depth order: 1. Mike Evans, 2. ...").
+SENTENCE_BREAK = re.compile(r"(?<!\bSr\.)(?<!\bJr\.)(?<!: \d\.)(?<!, \d\.)(?<!, \d\d\.)(?<=[.!?])\s+(?=[A-Z(])")
+
+
+def sentences(text: str) -> list[str]:
+    return [s.strip() for s in SENTENCE_BREAK.split(text.strip()) if s.strip()]
+
+
 def _first_sentence(text: str) -> str:
-    return re.split(r"(?<=[.!?])\s", text.strip(), maxsplit=1)[0].rstrip(".")
+    parts = sentences(text)
+    return parts[0].rstrip(".") if parts else ""
 
 
-def _next_up(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> str | None:
-    """The best stand-in: top target share in games he missed, else the next name on the depth chart."""
+def _next_up(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> tuple[str | None, str]:
+    """(stand-in, reason): top target share in games he missed, else top recent target
+    share among his teammates, else the next name on the depth chart."""
+    d = _Rows(*results.get("Depth chart", ([], [])))
+    depth = [n for n in d.text("player_name") if not same_player(n, player.name)]
     t = _Rows(*results.get("Games without the player", ([], [])))
     missed = [i for i, s in enumerate(t.text("player_status")) if s == "missed"]
     if missed:
         share = t.col("avg_target_share_pct")
-        return t.text("player_display_name")[max(missed, key=lambda i: share[i] or 0)]
-    d = _Rows(*results.get("Depth chart", ([], [])))
-    names = [n for n in d.text("player_name") if n != player.name]
-    return names[0] if names else None
+        best = max(missed, key=lambda i: share[i] or 0)
+        name = t.text("player_display_name")[best]
+        return name, f"{name} had the top target share ({_fmt(share[best])}%) in the games {player.name} missed."
+    u = _Rows(*results.get("Team usage", ([], [])))
+    recent = u.col("recent_target_share_pct")
+    others = [i for i, n in enumerate(u.text("player_display_name")) if not same_player(n, player.name) and recent[i] is not None]
+    if others:
+        best = max(others, key=lambda i: recent[i])
+        name, pos = u.text("player_display_name")[best], u.text("position")[best]
+        reason = f"{name} ({pos}) has the top recent target share among his teammates ({_fmt(recent[best])}%)."
+        if depth and not same_player(depth[0], name):
+            reason += f" The depth chart lists {depth[0]} next at {player.position}."
+        return name, reason
+    return (depth[0], f"{depth[0]} is next on the depth chart.") if depth else (None, "")
 
 
 def _usage(player: Player, results, column: str) -> float | None:
     t = _Rows(*results.get("Team usage", ([], [])))
     for name, value in zip(t.text("player_display_name"), t.col(column)):
-        if name == player.name:
+        if same_player(name, player.name):
             return value
     return None
+
+
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def name_key(name: str) -> str:
+    """'Deebo Samuel Sr.' and 'deebo samuel' -> 'deebo samuel' (sources disagree on suffixes)."""
+    tokens = re.sub(r"[^a-z ]", " ", name.lower().replace("'", "")).split()
+    return " ".join(t for t in tokens if t not in NAME_SUFFIXES)
+
+
+def same_player(a: str, b: str) -> bool:
+    return bool(name_key(a)) and name_key(a) == name_key(b)
 
 
 def rule_verdict(
@@ -655,8 +691,9 @@ def rule_verdict(
         why += f" Not supported: {', '.join(ruled_out)}."
 
     if question_type == "replacement":
-        stand_in = _next_up(player, results)
+        stand_in, reason = _next_up(player, results)
         verdict = f"Pick up {stand_in} if available" if stand_in else f"Hold until {player.team}'s next depth chart"
+        why = f"{why} {reason}" if reason else why
     elif question_type == "start_sit":
         ppr = _usage(player, results, "ppr_per_game")
         verdict = f"{'Start' if ppr is not None and ppr >= START_PPR else 'Sit'} {player.name}"
