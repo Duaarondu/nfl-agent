@@ -7,13 +7,15 @@ Code checks, each giving an issue with its reason and numbers:
   numbers          every number in the answer is in the query rows or in facts code computed from them
   artifacts        no leaked prompt labels ("[strong]"), "0.0 games" counts or missing values
   question_fit     the answer fits the question type (a "why" answer explains first),
-                   and its verdict names a player ("Verdict: start." blocks)
+                   its verdict names a player ("Verdict: start." blocks), and it never
+                   picks up or starts the player the question says is out
   timing           "after X got hurt" / "since week N" changes really start that week
   user_context     with league memory: no pickup of a player already on the user's
                    roster, and points quoted in the league's scoring (not "PPR" in a
                    half-PPR or standard league)
 Then one optional model review call (model_review), which falls back to the code
-checks alone if it fails, times out or has no time left.
+checks alone if it fails, times out or has no time left. Its issues block only in
+round 1, so they drive at most one revision; later rounds record them.
 
 Issues in the final answer block approval and send the verdict back for revision.
 Issues in factor summaries the model wrote are recorded but never block: the
@@ -35,6 +37,9 @@ AGENT_NAME = "critic"
 REVIEW_MAX_TOKENS = 8192
 REVIEW_TIMEOUT = 90  # the run budget (pipeline.RUN_BUDGET) still caps it
 MAX_MODEL_ISSUES = 3
+# Model-review issues may send the answer back only this many times (the reviewer can be
+# wrong, run ddb115ab07ae); the code checks block in every round.
+MODEL_BLOCKING_ROUNDS = 1
 
 REVIEW_PROMPT = """\
 You check a fantasy football answer against facts computed from nflverse data.
@@ -65,8 +70,13 @@ TEAMMATE_EVENT = re.compile(
     r"(?:got hurt|got injured|was injured|went out|went down|was ruled out|was out|missed time|left)"
 )
 WEEK_EVENT = re.compile(r"\b(?P<word>since|after|from|starting in|beginning in)\s+week\s+(?P<week>\d+)", re.I)
-RISE = re.compile(r"\b(?:rose|risen|rise|grew|grown|increased?|jumped|climbed|spiked|surged|expanded|boost(?:ed)?|higher|more)\b", re.I)
-FALL = re.compile(r"\b(?:fell|fallen|dropped|declined?|decreased?|shrank|lower|fewer)\b", re.I)
+RISE = re.compile(r"\b(?:rose|risen|rises?|rising|grew|grown|grows?|growing|increas(?:e[sd]?|ing)|jump(?:s|ed|ing)"
+                  r"|climb(?:s|ed|ing)|spik(?:es|ed|ing)|surg(?:es|ed|ing)|expand(?:s|ed|ing)|boost(?:s|ed|ing)?"
+                  r"|higher|more)\b", re.I)
+FALL = re.compile(r"\b(?:fell|fallen|falls?|falling|drop(?:s|ped|ping)|declin(?:e[sd]?|ing)|decreas(?:e[sd]?|ing)"
+                  r"|shr(?:ank|inks?|inking)|lower|fewer)\b", re.I)
+# Clauses checked on their own: "snap share fell ... starting in week 4; ... yards per target rising".
+CLAUSE_BREAK = re.compile(r";\s*")
 # (words in the sentence, factor whose weekly rows hold it, column, label); first match wins.
 METRICS = (
     (r"yards per target", "Big plays", "yards_per_target", "yards per target"),
@@ -77,6 +87,8 @@ METRICS = (
     (r"", "Opportunity", "{points}", "fantasy points"),  # the scoring's points column
 )
 PICKUP_ACTIONS = ("pick up", "add")
+# A replacement answer: "<depth chart pick> is next at WR on the depth chart, but ... so for fantasy: pick up X."
+FOR_FANTASY = "for fantasy:"
 # "PPR" not part of "half-PPR", "half PPR", "0.5 PPR" or "non-PPR".
 FULL_PPR = re.compile(r"(?<!half-)(?<!half )(?<!0\.5 )(?<!\.5 )(?<!non-)(?<!non )\bPPR\b", re.I)
 ANY_PPR = re.compile(r"(?<!non-)(?<!non )\bPPR\b", re.I)
@@ -112,7 +124,11 @@ def critique(
     reviewed_by = "rule-based"
     if model_review:
         try:
-            issues += _model_review(result, issues, deadline)
+            found_by_model = _model_review(result, issues, deadline)
+            if round > MODEL_BLOCKING_ROUNDS:
+                for issue in found_by_model:
+                    issue.blocking = False  # recorded, but only the code checks block after round 1
+            issues += found_by_model
             reviewed_by = "model"
         except AnalystError as error:
             trace(result.run_id, AGENT_NAME, "review", "fallback", round=round, reviewed_by="rule-based",
@@ -263,6 +279,13 @@ def check_question_fit(result: AnalystResult) -> list[Issue]:
     first = parts[0] if parts else ""
     qt = result.question_type
     verdict = verdict_sentence(result.answer)
+    subject = result.player.name if result.player else ""
+    name = recommended_name(verdict) if verdict else None
+    out = qt == "replacement" or bool(subject and factor_queries.says_out(result.question, subject))
+    if out and name and same_player(name, subject) and _action(verdict) in CONFIDENT_ACTIONS:
+        return [Issue("question_fit", "answer", verdict,
+                      f"The verdict says to {_action(verdict)} {subject}, the player who is out; "
+                      "recommend who replaces him.")]
     if verdict is not None and qt != "replacement":  # replacement has its own stand-in check below
         action = _action(verdict)
         if action and not recommended_name(verdict):
@@ -305,21 +328,25 @@ def check_timing(result: AnalystResult) -> list[Issue]:
 
 
 def _timing(result: AnalystResult, text: str, where: str, blocking: bool) -> list[Issue]:
+    """Each clause that ties a change to an event is tested on its own, so a direction
+    word in one clause ("yards per target rising") is never read against another
+    clause's event ("... starting in week 4")."""
     issues = []
     for sentence in sentences(text):
-        event = _event(result, sentence)
-        if event is None:
-            continue
-        start, label = event
-        if start is None:
-            issues.append(Issue("timing", where, sentence, label, blocking))
-            continue
-        rises, falls = bool(RISE.search(sentence)), bool(FALL.search(sentence))
-        if rises == falls:
-            continue  # no single direction claimed
-        problem = _timing_problem(result, sentence, start, label, rises)
-        if problem:
-            issues.append(Issue("timing", where, sentence, problem, blocking))
+        for clause in CLAUSE_BREAK.split(sentence):
+            event = _event(result, clause)
+            if event is None:
+                continue
+            start, label = event
+            if start is None:
+                issues.append(Issue("timing", where, sentence, label, blocking))
+                continue
+            rises, falls = RISE.search(clause), FALL.search(clause)
+            if bool(rises) == bool(falls):
+                continue  # no single direction claimed
+            problem = _timing_problem(result, clause, start, label, rises is not None, (rises or falls).start())
+            if problem:
+                issues.append(Issue("timing", where, sentence, problem, blocking))
     return issues
 
 
@@ -340,9 +367,10 @@ def _event(result: AnalystResult, sentence: str) -> tuple[int | None, str] | Non
     return None
 
 
-def _timing_problem(result: AnalystResult, sentence: str, start: int, label: str, rises: bool) -> str | None:
-    lower = sentence.lower()
-    _, factor, column, metric = next(m for m in METRICS if re.search(m[0], lower))
+def _timing_problem(
+    result: AnalystResult, sentence: str, start: int, label: str, rises: bool, at: int = 0
+) -> str | None:
+    _, factor, column, metric = _metric(sentence, at)
     table = _table(result, factor)
     if not table:
         return None  # no weekly rows for this question type; nothing to test against
@@ -363,6 +391,17 @@ def _timing_problem(result: AnalystResult, sentence: str, start: int, label: str
         return (f"The {direction} in his {metric} started before {label}: week {last_week} already had "
                 f"{_fmt(before[-1])}, vs {_fmt(a)} on average from week {start} on.")
     return None
+
+
+def _metric(sentence: str, at: int) -> tuple[str, str, str, str]:
+    """The METRICS entry the direction word at position `at` is about: the last metric
+    named before it ("target share fell"), else the first named after it, else points."""
+    lower = sentence.lower()
+    named = [(m.start(), entry) for entry in METRICS[:-1] for m in re.finditer(entry[0], lower)]
+    before = [n for n in named if n[0] < at]
+    if before:
+        return max(before, key=lambda n: n[0])[1]
+    return min(named, key=lambda n: n[0])[1] if named else METRICS[-1]
 
 
 # --- f) league memory: the user's roster and scoring ---
@@ -437,11 +476,16 @@ def _check_review(reply: dict[str, Any]) -> None:
 
 
 def verdict_sentence(answer: str) -> str | None:
-    """The sentence holding the action: "Verdict: ..." if present, else the first that starts with one."""
+    """The action: after "Verdict:" or "so for fantasy:" (a replacement answer's lead) if
+    present, else the first sentence that starts with one."""
     parts = sentences(answer)
     for s in parts:
         if s.lower().startswith("verdict:"):
             return s[len("verdict:"):].strip()
+    for s in parts:
+        at = s.lower().find(FOR_FANTASY)
+        if at >= 0:
+            return s[at + len(FOR_FANTASY):].strip()
     return next((s for s in parts if _action(s)), None)
 
 

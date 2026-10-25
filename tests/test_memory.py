@@ -173,7 +173,7 @@ def test_answer_uses_half_ppr_and_skips_the_rostered_player(real_sample, memory_
 
     usage = next(q for q in run.result.queries if q.factor == "Team usage")
     assert "AVG((fantasy_points + fantasy_points_ppr) / 2), 1) AS half_ppr_per_game" in usage.sql
-    assert run.result.answer.startswith("Pick up Christian McCaffrey if available.")
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey if available.")
     assert "among his teammates not already on your roster (22.8%)" in run.result.answer
     assert run.approved
     assert [l["action"] for l in read_trace(trace_dir) if l["agent_name"] == "memory"][-2:] == ["store", "retrieve"]
@@ -183,7 +183,7 @@ def test_session_one_question_is_about_the_player_who_is_out(real_sample, memory
     all_fail(model)  # no model name for the player: the lookup must not pick rostered Kittle
     run = pipeline.answer(f"{SESSION_1}. {BUCS}", user_id="u1", model_review=False)
     assert run.result.player.name == "Mike Evans"
-    assert run.result.answer.startswith("Pick up Christian McCaffrey if available.")
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey if available.")
 
 
 def test_verdict_prompt_carries_the_memory(real_sample, memory_dir, model):
@@ -279,7 +279,7 @@ def test_critic_sends_a_rostered_pickup_back(real_sample, memory_dir, model):
     run = pipeline.answer(BUCS, user_id="u1", model_review=False)
     assert [c.status for c in run.critiques] == ["needs_revision", "approved"]
     assert {i.check for i in run.critiques[0].blocking} == {"user_context"}
-    assert run.result.answer.startswith("Pick up Christian McCaffrey.")
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey.")
 
 
 def test_saved_runs_without_memory_still_load():

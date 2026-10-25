@@ -20,7 +20,9 @@ PROMPT = """\
 Read one fantasy football question. Reply with only this JSON:
 {"player_name": "<full name of the NFL player it is about, or null>",
  "question_type": "why" | "replacement" | "start_sit" | "waiver" | "other"}
-why: explain a player's production. replacement: who takes over if a player is out.
+why: explain a player's production. replacement: who takes over if a player is out,
+including who to pick up or start because a player is out or misses time ("Should I pick
+up a 49ers receiver if Evans misses time?" is replacement, about Evans).
 start_sit: start or bench. waiver: pick up, add or drop.
 For a replacement question, player_name is the player who is out."""
 MAX_TOKENS = 4096  # Lightning thinks before replying; 1024 ran out (HTTP 502 empty_response)

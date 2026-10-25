@@ -208,7 +208,7 @@ def test_replacement_question_rates_usage_depth_and_games_without(real_sample, m
     assert "1. Mike Evans, 2. Deebo Samuel" in depth_call[1]["content"]
     without = next(c for c in calls_for(model, analyst.FACTOR_PROMPT) if "Factor: Games without" in c[1]["content"])
     assert "He played every team game this season" in without[1]["content"]
-    assert result.answer == "Pick up Deebo Samuel. Deebo Samuel becomes the WR1 by depth chart."
+    assert result.answer == "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: pick up Deebo Samuel. Deebo Samuel becomes the WR1 by depth chart."
     assert result.premise_correction is None
 
 
@@ -282,9 +282,10 @@ def test_rule_based_replacement_verdict_names_the_stand_in(real_sample, model):
     script(model, classify("Mike Evans", "replacement"), answer=meterless.MeterlessError("down"))
     result = analyze(BUCS)
     # Kittle's 24.9% recent target share beats Samuel's 11.1%; the depth chart's pick is still named.
-    assert result.answer.startswith("Pick up George Kittle if available.")
+    # The literal answer (the depth chart) first, then the fantasy advice (target share).
+    assert result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle if available.")
     assert "George Kittle (TE) has the top recent target share among his teammates (24.9%)." in result.answer
-    assert "The depth chart lists Deebo Samuel next at WR." in result.answer
+    assert "The depth chart lists" not in result.answer  # said once, in the lead
 
 
 def test_thinking_and_fences_are_ignored(real_sample, model):

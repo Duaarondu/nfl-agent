@@ -12,6 +12,10 @@ from app import pipeline
 BUCS = "Who becomes the Bucs' WR1 if Mike Evans is out?"
 SAMUEL = json.dumps({"verdict": "Start Deebo Samuel", "why": "The depth chart ranks him second."})
 KITTLE = json.dumps({"verdict": "Pick up George Kittle", "why": "His 24.9% recent target share leads the 49ers after Evans."})
+# A replacement answer opens with the depth chart's answer, then the fantasy advice.
+SAMUEL_LEAD = "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: start Deebo Samuel."
+KITTLE_LEAD = ("Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), "
+               "so for fantasy: pick up George Kittle")
 NO_ISSUES = json.dumps({"issues": []})
 
 
@@ -45,15 +49,15 @@ def test_flagged_verdict_is_revised_then_approved(real_sample, model, trace_dir)
     script(model, [SAMUEL], revised=[KITTLE])
     run = pipeline.answer(BUCS)
 
-    assert run.first_answer == "Start Deebo Samuel. The depth chart ranks him second."
-    assert run.result.answer == "Pick up George Kittle. His 24.9% recent target share leads the 49ers after Evans."
+    assert run.first_answer == f"{SAMUEL_LEAD} The depth chart ranks him second."
+    assert run.result.answer == f"{KITTLE_LEAD}. His 24.9% recent target share leads the 49ers after Evans."
     assert run.approved and [c.status for c in run.critiques] == ["needs_revision", "approved"]
     assert run.critiques[0].blocking[0].check == "verdict_support"
     # Factor agents ran once (3 factors); the verdict ran twice: first answer and one revision.
     assert len(calls(model, analyst.FACTOR_PROMPT)) == 3
     assert len(calls(model, analyst.VERDICT_PROMPT)) == 2
     revision_prompt = calls(model, analyst.VERDICT_PROMPT)[1][-1]["content"]
-    assert "Your previous answer:\nStart Deebo Samuel." in revision_prompt
+    assert f"Your previous answer:\n{SAMUEL_LEAD}" in revision_prompt
     assert "trails George Kittle (TE) 24.9% and Christian McCaffrey (RB) 22.8%" in revision_prompt
 
     lines = read_trace(trace_dir)
@@ -88,7 +92,7 @@ def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, tr
     assert [c.round for c in run.critiques] == [1, 2, 3]
     assert len(calls(model, analyst.VERDICT_PROMPT)) == 3  # first answer + 2 revisions
     assert len(calls(model, critic.REVIEW_PROMPT)) == 3
-    assert run.result.answer.startswith("Start Deebo Samuel. The depth chart ranks him second. Critic note: ")
+    assert run.result.answer.startswith(f"{SAMUEL_LEAD} The depth chart ranks him second. Critic note: ")
     assert "trails George Kittle (TE) 24.9%" in run.result.answer
     lines = read_trace(trace_dir)
     assert [l["status"] for l in lines if l["action"] == "critique"] == ["needs_revision"] * 3
@@ -112,7 +116,7 @@ def test_failed_revision_falls_back_to_the_rule_verdict(real_sample, model, trac
 
     # The rule-based stand-in follows target share, so it passes on round 2.
     assert run.approved and run.result.verdict_by == "rule-based"
-    assert run.result.answer.startswith("Pick up George Kittle if available.")
+    assert run.result.answer.startswith(f"{KITTLE_LEAD} if available.")
     [revise] = [l for l in read_trace(trace_dir) if l["action"] == "revise"]
     assert (revise["status"], revise["verdict_by"]) == ("fallback", "rule-based")
 
@@ -149,5 +153,5 @@ def test_review_runs_the_loop_on_a_saved_answer(model, trace_dir):
     assert run.first_answer.startswith("Start Deebo Samuel. The depth chart [strong]")
     assert [c.status for c in run.critiques] == ["needs_revision", "approved"]
     assert {i.check for i in run.critiques[0].blocking} == {"verdict_support", "artifacts"}
-    assert run.result.answer.startswith("Pick up George Kittle.")
+    assert run.result.answer.startswith(f"{KITTLE_LEAD}.")
     assert not calls(model, analyst.FACTOR_PROMPT) and not calls(model, analyst.CLASSIFY_PROMPT)

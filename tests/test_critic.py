@@ -46,6 +46,25 @@ def test_verdict_backed_by_the_numbers_passes():
     assert not issues(depth_noted, "verdict_support")
 
 
+def test_replacement_answer_shape_passes_check_a():
+    # The literal answer (the depth chart's next WR) first, then the pick the target share backs.
+    result = with_answer(BUCS, (
+        "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), "
+        "so for fantasy: pick up George Kittle. He has the top recent target share among his teammates."
+    ))
+    assert critic.verdict_sentence(result.answer) == "pick up George Kittle."
+    assert not issues(result, "verdict_support") and not issues(result, "question_fit")
+
+
+def test_replacement_answer_shape_still_follows_the_usage_numbers():
+    result = with_answer(BUCS, (
+        "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+        "so for fantasy: pick up Deebo Samuel."
+    ))
+    [issue] = issues(result, "verdict_support")
+    assert issue.blocking and "less than half of George Kittle's" in issue.reason
+
+
 def test_todays_live_samuel_answer_is_blocked_even_though_it_names_kittle():
     # Run 5630e3d22688: the critic approved this in round 2 before check (a) was tightened.
     result = load_example(BUCS, run="5630e3d22688")
@@ -148,6 +167,25 @@ def test_verdict_must_name_a_player(question_type, answer):
     assert issue.blocking and "names no player" in issue.reason
 
 
+C2 = "Should I pick up a 49ers receiver if Evans misses time?"
+
+
+@pytest.mark.parametrize("question_type", ["waiver", "start_sit", "replacement"])
+@pytest.mark.parametrize("verdict", ["Pick up Mike Evans", "Start Mike Evans"])
+def test_verdict_never_picks_up_or_starts_the_player_who_is_out(question_type, verdict):
+    # Run 994c234341e5 answered the c2 question with "Pick up Mike Evans" and was approved.
+    result = with_answer(BUCS, f"{verdict}. Mike Evans leads 49ers targets at 27.1%.")
+    result.question, result.question_type = C2, question_type
+    [issue] = issues(result, "question_fit")
+    assert issue.blocking and "Mike Evans, the player who is out" in issue.reason
+
+
+def test_out_check_needs_the_question_to_say_he_is_out():
+    result = with_answer(BUCS, "Pick up Mike Evans. He leads 49ers targets at 27.1%.")
+    result.question, result.question_type = "Should I pick up Mike Evans?", "waiver"
+    assert not issues(result, "question_fit")
+
+
 def test_named_verdicts_pass_the_name_check():
     for answer in ("His 6 touchdowns explain it. Verdict: start Christian Watson.",
                    "His 6 touchdowns explain it. Verdict: hold Watson."):
@@ -186,6 +224,36 @@ def test_change_that_was_already_there_before_the_event_is_flagged():
     result = with_answer(WATSON, "His yards per target jumped after Brooks went out. Verdict: hold Christian Watson.")
     [issue] = issues(result, "timing")
     assert issue.reason.startswith("The rise in his yards per target started before Brooks was first out in week 5")
+
+
+def test_rising_claim_in_another_clause_is_not_read_against_a_fall():
+    # Run c86443db3074, round 1: "fell ... starting in week 4" in the Opportunity clause made the
+    # whole sentence a fall, tested on yards per target, which the Big plays clause says
+    # (correctly) was rising: "averaged 10.6 before week 4 and 13.9 from week 4 on".
+    result = load_example(WATSON, run="c86443db3074")
+    result.answer = (
+        "Most supported by the data: Opportunity (strong): Christian Watson's 80.3% average snap share and "
+        "22.2% average target share over 6 games yield 19.8 PPR points per game, with 23.1 PPR in weeks 1-3 "
+        "vs 16.5 in weeks 4-6, but snap share fell from 82% to 78.7% and target share from 25.8% to 18.6% "
+        "starting in week 4; Big plays (strong): Christian Watson's 10 20+-yard plays, 32.4% air yards share, "
+        "and yards per target rising from 10.6 to 13.9 strongly drive his fantasy production; Touchdowns and "
+        "red zone (strong): Christian Watson's 6 touchdowns produce 36 of 118.8 PPR points (30.3%), and 7 of "
+        "35 team red-zone targets (20%) go to him without red-zone carries. Not supported: Teammate absences. "
+        "Verdict: hold Christian Watson."
+    )
+    assert not issues(result, "timing")
+
+
+@pytest.mark.parametrize("claim, problem", [
+    # Same live run, but these claims contradict the rows, so they still block.
+    ("His yards per target started falling from week 4.", "so it did not fall after week 4"),
+    ("His target share was rising starting in week 4.", "so it did not rise after week 4"),
+])
+def test_wrong_direction_still_blocks_with_the_new_verb_forms(claim, problem):
+    result = load_example(WATSON, run="c86443db3074")
+    result.answer = f"{claim} Verdict: hold Christian Watson."
+    [issue] = issues(result, "timing")
+    assert issue.blocking and problem in issue.reason
 
 
 @pytest.mark.parametrize("claim", [
@@ -233,11 +301,25 @@ def test_model_issue_blocks_only_when_it_quotes_the_answer(review, trace_dir):
         {"claim": "His 22.2% target share explains it", "reason": "Target share fell to 18.6% in weeks 4-6."},
         {"claim": "words that are not in the answer", "reason": "x"},
     ]})
-    found = critic.critique(result, 2, FAR_OFF)
+    found = critic.critique(result, 1, FAR_OFF)
     assert [(i.check, i.blocking) for i in found.issues] == [("model_review", True), ("model_review", False)]
     assert found.status == "needs_revision"
     [line] = [l for l in read_trace(trace_dir) if l["action"] == "critique"]
     assert (line["status"], line["target_agent"], line["blocking"]) == ("needs_revision", "analyst", 1)
+
+
+def test_model_issues_block_only_in_round_one_but_code_checks_block_in_every_round(review):
+    review.reply = json.dumps({"issues": [
+        {"claim": "His 22.2% target share explains it", "reason": "Target share fell to 18.6% in weeks 4-6."},
+    ]})
+    result = with_answer(WATSON, "His 22.2% target share explains it. Verdict: hold Christian Watson.")
+    assert critic.critique(result, 1, FAR_OFF).status == "needs_revision"
+    later = critic.critique(result, 2, FAR_OFF)
+    assert later.status == "approved" and [(i.check, i.blocking) for i in later.issues] == [("model_review", False)]
+
+    result.answer = "His 22.2% target share and 99.9 yards explain it. Verdict: hold Christian Watson."
+    third = critic.critique(result, 3, FAR_OFF)
+    assert third.status == "needs_revision" and [i.check for i in third.blocking] == ["numbers"]
 
 
 @pytest.mark.parametrize("failure", [meterless.MeterlessError("down"), "not json"])

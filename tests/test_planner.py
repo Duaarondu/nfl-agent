@@ -25,3 +25,12 @@ def test_keyword_fallback_still_hands_off(model, trace_dir):
     assert route == planner.Route(None, "start_sit", "keyword")
     handoff = [l for l in read_trace(trace_dir) if l["action"] == "handoff"]
     assert [(h["classified_by"], h["question_type"]) for h in handoff] == [("keyword", "start_sit")]
+
+
+C2 = "Should I pick up a 49ers receiver if Evans misses time?"
+
+
+def test_pickup_because_a_player_is_out_is_a_replacement_question(model):
+    assert "if Evans misses time?\" is replacement, about Evans" in planner.PROMPT
+    model.replies = [meterless.MeterlessError("down")]
+    assert planner.plan("r1", C2) == planner.Route(None, "replacement", "keyword")

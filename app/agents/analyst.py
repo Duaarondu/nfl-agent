@@ -84,6 +84,12 @@ against nflverse data. Reply with only this JSON:
 {"verdict": "<short action phrase, e.g. Pick up Deebo Samuel / Start Christian Watson / Hold Mike Evans>",
  "why": "<2-3 complete sentences>"}
 verdict starts with one of: Pick up, Add, Start, Sit, Bench, Hold, Drop, Stash.
+Never pick up or start the player the question says is out or missing time.
+For a replacement question (who takes over if a player is out), verdict names the
+fantasy pick, backed by target share; the answer then opens with who is next on the
+depth chart, written by the system ("Deebo Samuel is next at WR on the depth chart, but
+the target share points to George Kittle (24.9%), so for fantasy: pick up George
+Kittle"), so do not repeat the depth chart in "why".
 In "why", lead with the most supported factors and their numbers; use only numbers
 given, at most 1 decimal place. If a premise check is given, answer the corrected
 question. If a user context is given, quote points in its scoring and never recommend
@@ -287,7 +293,7 @@ def analyze(
     deadline = max(started + TOTAL_BUDGET, time.perf_counter() + VERDICT_RESERVE)
     facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory)
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
-                       memory=memory)
+                       memory=memory, out=factor_queries.says_out(question, plan.player.name))
     result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
     result.user_context = memory
     return result
@@ -338,6 +344,7 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
         deadline=deadline, revision=(result.answer, issues), memory=result.user_context,
+        out=factor_queries.says_out(result.question, result.player.name),
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -432,34 +439,38 @@ def _check_rating(reply: dict[str, Any]) -> None:
 def _verdict(
     run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
-    revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None,
+    revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None, out: bool = False,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
     revision is (previous answer, critic issues) when the critic sent the answer back.
-    The rule-based stand-in skips players already on the user's roster (memory).
+    The rule-based stand-in skips players already on the user's roster (memory), and
+    never names the player when the question says he is out (out).
     """
     note = ""
+    results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
     try:
         reply = _model_verdict(run_id, facts, deadline, revision)
         verdict, why, by = reply["verdict"], reply["why"], "model"
     except AnalystError as error:
-        results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
         ranked = [(f.factor, f.support, f.summary) for f in factors]
         roster = memory.roster_names if memory else ()
-        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster)
+        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out)
         note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
               step="revise" if revision else "verdict", reason=str(error)[:300])
-    return round_numbers(_compose(question_type, verdict, why, note)), by
+    lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
+    return round_numbers(_compose(question_type, verdict, why, note, lead)), by
 
 
-def _compose(question_type: str, verdict: str, why: str, note: str = "") -> str:
+def _compose(question_type: str, verdict: str, why: str, note: str = "", lead: str | None = None) -> str:
     """Join verdict and why with sentence case and one period each.
 
     A "why" question gets the explanation first and the action last
-    ("He ... Verdict: hold Christian Watson."); every other type leads with the action.
+    ("He ... Verdict: hold Christian Watson."); a replacement question opens with lead
+    (the depth chart's answer, then "so for fantasy: <verdict>"); every other type leads
+    with the action.
     """
     verdict, why = verdict.strip().rstrip(".").strip(), why.strip()
     why = why[:1].upper() + why[1:]
@@ -467,6 +478,8 @@ def _compose(question_type: str, verdict: str, why: str, note: str = "") -> str:
         why += "."
     if question_type == "why" and why:
         text = f"{why} Verdict: {verdict[:1].lower() + verdict[1:]}."
+    elif lead:
+        text = f"{lead} {why}" if why else lead
     else:
         verdict = verdict[:1].upper() + verdict[1:]
         text = f"{verdict}. {why}" if why else f"{verdict}."

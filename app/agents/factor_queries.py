@@ -103,12 +103,29 @@ class PlannedQuery:
     sql: str
 
 
+# "is out", "misses time", "ruled out": the question says a player will not play.
+OUT_PHRASE = (r"(?:(?:is|are|goes|gets|got|went|was|being)\s+(?:out|ruled out|sidelined|hurt|injured|down)"
+              r"|miss(?:es|ing|ed)?\s+(?:time|games?|weeks?)|ruled out|sidelined|(?:is|goes|went)\s+on\s+(?:the\s+)?ir)\b")
+
+
+def says_out(question: str, name: str | None = None) -> bool:
+    """Whether the question says a player (this one, by surname, if name is given) is out.
+
+    "Should I pick up a 49ers receiver if Evans misses time?" says Evans is out.
+    """
+    if name is None:
+        return re.search(rf"\b{OUT_PHRASE}", question, re.I) is not None
+    key = name_key(name).split()
+    return bool(key) and re.search(rf"\b{re.escape(key[-1])}(?:['’]s)?\s+{OUT_PHRASE}", question, re.I) is not None
+
+
 def guess_question_type(question: str) -> str:
     """Keyword fallback for when the model cannot classify the question."""
     text = question.lower()
     if is_why_question(text):
         return "why"
-    if re.search(r"\b(becomes?|replace|replaces|takes? over|next man up|wr1|rb1|te1)\b", text):
+    # "Should I pick up a 49ers receiver if Evans misses time?" asks who replaces him.
+    if re.search(r"\b(becomes?|replace|replaces|takes? over|next man up|wr1|rb1|te1)\b", text) or says_out(text):
         return "replacement"
     if re.search(r"\b(start|sit|bench|flex)\b", text):
         return "start_sit"
@@ -704,10 +721,7 @@ def _next_up(
         name, pos = u.text("player_display_name")[best], u.text("position")[best]
         among = "his teammates not already on your roster" if exclude else "his teammates"
         reason = f"{name} ({pos}) has the top recent target share among {among} ({_fmt(recent[best])}%)."
-        reason += _per_game(u, best, "this season")
-        if depth and not same_player(depth[0], name):
-            reason += f" The depth chart lists {depth[0]} next at {player.position}."
-        return name, reason
+        return name, reason + _per_game(u, best, "this season")  # replacement_lead names the depth chart's pick
     return (depth[0], f"{depth[0]} is next on the depth chart.") if depth else (None, "")
 
 
@@ -717,10 +731,11 @@ def _per_game(t: _Rows, i: int, when: str) -> str:
     return f" He averages {_fmt(value)} {t.scoring.label} points per game {when}." if value is not None else ""
 
 
-def _usage(player: Player, results, column: str) -> float | None:
+def _usage(player: Player | str, results, column: str) -> float | None:
+    wanted = player if isinstance(player, str) else player.name
     t = _Rows(*results.get("Team usage", ([], [])))
     for name, value in zip(t.text("player_display_name"), t.col(column)):
-        if same_player(name, player.name):
+        if same_player(name, wanted):
             return value
     return None
 
@@ -738,13 +753,39 @@ def same_player(a: str, b: str) -> bool:
     return bool(name_key(a)) and name_key(a) == name_key(b)
 
 
+def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[list]]], verdict: str) -> str | None:
+    """A replacement answer's first sentence: the literal question, then the fantasy advice.
+
+    "Deebo Samuel is next at WR on the depth chart, but the target share points to
+    George Kittle (24.9%), so for fantasy: pick up George Kittle if available."
+    None without a depth chart row to answer from.
+    """
+    d = _Rows(*results.get("Depth chart", ([], [])))
+    depth = [n for n in d.text("player_name") if not same_player(n, player.name)]
+    if not depth:
+        return None
+    advice = verdict.strip().rstrip(".")
+    advice = advice[:1].lower() + advice[1:]
+    m = re.match(r"(?:pick up|add|start)\s+(.+?)(?:\s+if available)?$", advice, re.I)
+    pick = m.group(1) if m else None
+    share = _usage(pick, results, "recent_target_share_pct") if pick else None
+    lead = f"{depth[0]} is next at {player.position} on the depth chart"
+    if pick and same_player(pick, depth[0]):
+        lead += f" ({_fmt(share)}% recent target share)" if share is not None else ""
+    elif pick:
+        lead += f", but the target share points to {pick}" + (f" ({_fmt(share)}%)" if share is not None else "")
+    return f"{lead}, so for fantasy: {advice}."
+
+
 def rule_verdict(
     question_type: str, player: Player, results: dict[str, tuple[list[str], list[list]]],
-    ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (),
+    ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (), out: bool = False,
 ) -> tuple[str, str]:
     """(verdict, why) from fixed rules; ranked is (factor, support, summary), most supported first.
 
     roster: names already on the user's roster, never recommended as a pickup.
+    out: the question says this player is out, so a pickup or start never names him: the
+    stand-in rule (as for a replacement question) picks who to add instead.
     """
     backed = [(f, s, text) for f, s, text in ranked if s in ("strong", "moderate")]
     reasons = "; ".join(f"{f} ({s}): {_first_sentence(text)}" for f, s, text in backed[:3])
@@ -753,7 +794,7 @@ def rule_verdict(
     if ruled_out:
         why += f" Not supported: {', '.join(ruled_out)}."
 
-    if question_type == "replacement":
+    if question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):
         stand_in, reason = _next_up(player, results, roster)
         verdict = f"Pick up {stand_in} if available" if stand_in else f"Hold until {player.team}'s next depth chart"
         why = f"{why} {reason}" if reason else why

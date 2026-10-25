@@ -69,8 +69,8 @@ def test_league_memory_carries_across_processes(tmp_path):
     assert "half-PPR points per game" in answer
     assert "PPR" not in answer.replace("half-PPR", "")
     # Kittle leads the remaining 49ers in recent target share, but he is already on the roster.
-    assert answer.startswith("Pick up Christian McCaffrey")
-    assert not answer.startswith("Pick up George Kittle")
+    assert "so for fantasy: pick up Christian McCaffrey" in answer
+    assert "pick up George Kittle" not in answer
     assert second["approved"] and result["verdict_by"] == "rule-based"
 
     # The H-MEM audit ledger was appended by both processes.

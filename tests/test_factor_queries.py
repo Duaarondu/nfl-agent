@@ -82,10 +82,36 @@ def test_wrong_teams(question, wrong):
         ("Should I start Watson or Kittle?", "start_sit"),
         ("Is Watson worth a waiver claim?", "waiver"),
         ("How old is Watson?", "other"),
+        # A pickup or start because a player is out asks who replaces him (run 994c234341e5).
+        ("Should I pick up a 49ers receiver if Evans misses time?", "replacement"),
+        ("Who should I start if Kittle is ruled out?", "replacement"),
+        ("Should I pick up Jauan Jennings?", "waiver"),
     ],
 )
 def test_guess_question_type(question, expected):
     assert fq.guess_question_type(question) == expected
+
+
+@pytest.mark.parametrize("question, name, out", [
+    ("Should I pick up a 49ers receiver if Evans misses time?", "Mike Evans", True),
+    ("Who becomes the Bucs' WR1 if Mike Evans is out?", "Mike Evans", True),
+    ("Mike Evans is out. Who becomes the 49ers' WR1?", "Mike Evans", True),
+    ("If Kittle is out, should I pick up Mike Evans?", "Mike Evans", False),  # Kittle is out, not Evans
+    ("Is Mike Evans worth a pickup?", "Mike Evans", False),
+])
+def test_says_out(question, name, out):
+    assert fq.says_out(question, name) is out
+
+
+def test_rule_verdict_never_picks_up_the_player_who_is_out(real_sample):
+    evans, results = without_results("Mike Evans")
+    usage = fq.team_bundle(evans, SEASON, WEEK)[1]
+    result = run_sql(usage.sql)
+    results["Team usage"] = (result["headers"], result["data"])
+    # Evans leads the 49ers in target share, so the waiver rule alone says "Pick up Mike Evans".
+    assert fq.rule_verdict("waiver", evans, results, [])[0] == "Pick up Mike Evans"
+    verdict, _ = fq.rule_verdict("waiver", evans, results, [], out=True)
+    assert verdict == "Pick up George Kittle if available"
 
 
 def test_plan_picks_bundle_by_question_type():
