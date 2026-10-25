@@ -23,8 +23,9 @@ def read_trace(trace_dir):
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
-def load_example(slug_start):
-    """A saved examples/<slug>/<run>/result.json as an AnalystResult.
+def load_example(slug_start, run=""):
+    """A saved examples/<slug>/<run>/result.json as an AnalystResult (the oldest run,
+    or the one whose folder ends with run).
 
     Runs saved before the Critic existed lack question_type, player and asked;
     they are rebuilt from the question and the player lookup rows.
@@ -32,7 +33,7 @@ def load_example(slug_start):
     from app.agents import factor_queries as fq
     from app.agents.analyst import AnalystResult, Claim, Evidence, Factor, QueryRecord
 
-    [path] = sorted(EXAMPLES.glob(f"{slug_start}*/*/result.json"))[:1]
+    [path] = sorted(EXAMPLES.glob(f"{slug_start}*/*{run}/result.json"))[:1]
     data = json.loads(path.read_text(encoding="utf-8"))
     data = data.get("result", data)  # pipeline runs wrap the Analyst result
     ev = lambda items: [Evidence(**e) for e in items]

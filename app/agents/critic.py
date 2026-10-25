@@ -1,7 +1,9 @@
 """Critic agent: checks the Analyst's answer against the numbers before it is shown.
 
 Code checks, each giving an issue with its reason and numbers:
-  verdict_support  the recommended player is the one the usage numbers back
+  verdict_support  the recommended player is the one the usage numbers back; a Start /
+                   Pick up for a player under half the top teammate's target share
+                   always blocks, even if the answer names that teammate
   numbers          every number in the answer is in the query rows or in facts code computed from them
   artifacts        no leaked prompt labels ("[strong]"), "0.0 games" counts or missing values
   question_fit     the answer fits the question type (a "why" answer explains first)
@@ -39,6 +41,8 @@ when a change started. Do not report style or wording, or problems listed as alr
 found. Reply {"issues": []} if the answer holds up."""
 
 ACTIONS = ("hold off on", "pick up", "add", "start", "sit", "bench", "hold", "drop", "stash")
+# Actions that commit a lineup spot or a roster move; these must follow the usage numbers.
+CONFIDENT_ACTIONS = ("start", "pick up", "add")
 QUESTION_ACTIONS = {
     "start_sit": ("start", "sit", "bench"),
     "waiver": ("pick up", "add", "hold off on", "stash", "drop"),
@@ -146,8 +150,19 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
                                 f"{name} has no recent target share in the {_team(result)} usage rows."))
         else:
             ahead = sorted(((n, p, s) for n, p, s in rows if s is not None and s > mine[1]), key=lambda r: -r[2])
-            if any(not mentioned(n, result.answer) for n, _, _ in ahead):
-                trailing = " and ".join(f"{n} ({p}) {_fmt(s)}%" for n, p, s in ahead)
+            trailing = " and ".join(f"{n} ({p}) {_fmt(s)}%" for n, p, s in ahead)
+            action = _action(verdict) or ""
+            # A confident action for a player far behind on usage is blocked even if the
+            # answer names the teammates ahead of him: mentioning them is not following them.
+            if action in CONFIDENT_ACTIONS and ahead and mine[1] < ahead[0][2] / 2:
+                top_name, top_pos, top_share = ahead[0]
+                issues.append(Issue(
+                    "verdict_support", "answer", verdict,
+                    f"{mine[0]}'s recent target share ({_fmt(mine[1])}%) trails {trailing}, and is less than "
+                    f"half of {top_name}'s. A '{action.capitalize()}' must follow the usage numbers: recommend "
+                    "the player they back. The answer may still say who is next on the depth chart.",
+                ))
+            elif any(not mentioned(n, result.answer) for n, _, _ in ahead):
                 issues.append(Issue(
                     "verdict_support", "answer", verdict,
                     f"{mine[0]}'s recent target share ({_fmt(mine[1])}%) trails {trailing}. "
@@ -393,7 +408,8 @@ def recommended_name(verdict: str) -> str | None:
 def mentioned(name: str, text: str) -> bool:
     """Whether the answer names this player (by surname)."""
     key = name_key(name).split()
-    return bool(key) and re.search(rf"\b{re.escape(key[-1])}\b", text.lower().replace("'", "")) is not None
+    text = re.sub(r"['’]s\b", "", text.lower()).replace("'", "")  # "Kittle's" names Kittle
+    return bool(key) and re.search(rf"\b{re.escape(key[-1])}\b", text) is not None
 
 
 def _named(full: str, given: str) -> bool:

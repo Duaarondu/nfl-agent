@@ -32,18 +32,49 @@ def test_samuel_verdict_is_flagged_by_target_share():
     assert issue.blocking and issue.claim == "Start Deebo Samuel."
     assert issue.reason.startswith(
         "Deebo Samuel Sr.'s recent target share (11.1%) trails George Kittle (TE) 24.9% "
-        "and Christian McCaffrey (RB) 22.8%."
+        "and Christian McCaffrey (RB) 22.8%, and is less than half of George Kittle's."
     )
 
 
 def test_verdict_backed_by_the_numbers_passes():
     assert not issues(with_answer(BUCS, "Pick up George Kittle. His 24.9% recent target share leads."), "verdict_support")
-    # Samuel can still be the pick if the answer deals with who out-targets him.
-    addressed = with_answer(BUCS, (
-        "Pick up Deebo Samuel. He is next on the WR depth chart, though George Kittle (24.9%) "
-        "and Christian McCaffrey (22.8%) see more targets than his 11.1%."
+    # The depth chart may still be mentioned, as long as the pick follows the usage numbers.
+    depth_noted = with_answer(BUCS, (
+        "Pick up George Kittle. Deebo Samuel is next at WR on the depth chart, but Kittle (24.9%) "
+        "and Christian McCaffrey (22.8%) get far more targets than his 11.1%."
     ))
-    assert not issues(addressed, "verdict_support")
+    assert not issues(depth_noted, "verdict_support")
+
+
+def test_todays_live_samuel_answer_is_blocked_even_though_it_names_kittle():
+    # Run 5630e3d22688: the critic approved this in round 2 before check (a) was tightened.
+    result = load_example(BUCS, run="5630e3d22688")
+    assert result.answer.startswith("Start Deebo Samuel.") and "Kittle 24.9%" in result.answer
+    [issue] = issues(result, "verdict_support")
+    assert issue.blocking
+    assert "and is less than half of George Kittle's. A 'Start' must follow the usage numbers" in issue.reason
+
+
+@pytest.mark.parametrize("answer", [
+    # Samuel is named with Kittle and McCaffrey: mentioning them no longer saves a confident action.
+    "Pick up Deebo Samuel. He is next on the WR depth chart, though George Kittle (24.9%) "
+    "and Christian McCaffrey (22.8%) see more targets than his 11.1%.",
+    "Add Deebo Samuel. Kittle and McCaffrey see more targets.",
+])
+def test_confident_action_under_half_the_top_share_is_blocked(answer):
+    [issue] = issues(with_answer(BUCS, answer), "verdict_support")
+    assert issue.blocking and "less than half of George Kittle's" in issue.reason
+
+
+def test_weaker_action_or_closer_share_only_needs_the_teammates_named():
+    # Stash is not a confident action; McCaffrey's 22.8% is more than half of Kittle's 24.9%.
+    for answer in (
+        "Stash Deebo Samuel. Kittle (24.9%) and McCaffrey (22.8%) get more targets; he is next on the depth chart.",
+        "Pick up Christian McCaffrey. Kittle's 24.9% is close to his 22.8%.",
+    ):
+        assert not issues(with_answer(BUCS, answer), "verdict_support"), answer
+    [issue] = issues(with_answer(BUCS, "Pick up Christian McCaffrey. He has 22.8%."), "verdict_support")
+    assert "trails George Kittle (TE) 24.9%. The answer must explain why" in issue.reason
 
 
 def test_why_verdict_about_the_player_himself_is_not_compared():
