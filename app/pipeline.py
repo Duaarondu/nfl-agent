@@ -1,6 +1,10 @@
 """One question end to end: the Analyst answers, the Critic checks, the verdict is revised.
 
-    analyst.analyze -> critic.critique -> (needs_revision) analyst.revise_verdict -> critique ...
+    [memory.remember ->] analyst.analyze -> critic.critique -> (needs_revision) analyst.revise_verdict -> critique ...
+
+With a user_id, league memory (app.agents.memory, on the H-MEM engine) first stores
+what the question says about the user's league and roster, then retrieves what is
+remembered, so the answer uses their scoring and is written for their roster.
 
 At most MAX_ROUNDS critiques, so at most MAX_ROUNDS - 1 revisions; only the verdict
 step is rerun, never the factor agents. The whole run fits in RUN_BUDGET seconds:
@@ -14,7 +18,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from app.agents import analyst, critic
+from app.agents import analyst, critic, memory
 from app.agents.analyst import AnalystResult
 from app.agents.critic import Critique
 from app.trace import new_run_id, trace
@@ -33,15 +37,20 @@ class PipelineResult:
     seconds: float
 
 
-def answer(question: str, run_id: str | None = None, model_review: bool | None = None) -> PipelineResult:
+def answer(
+    question: str, run_id: str | None = None, model_review: bool | None = None,
+    user_id: str | None = None, session_id: str | None = None,
+) -> PipelineResult:
     """Raises analyst.AnalystError if the Analyst cannot answer at all.
 
     model_review (default: CRITIC_MODEL_REVIEW env, on) adds the Critic's model call
-    to its code checks.
+    to its code checks. user_id turns on league memory; session_id (default: the
+    run_id) scopes what this session writes.
     """
     run_id = run_id or new_run_id()
     started = time.perf_counter()
-    result = analyst.analyze(question, run_id=run_id)
+    context = memory.remember(user_id, question, run_id, session_id) if user_id else None
+    result = analyst.analyze(question, run_id=run_id, memory=context)
     return review(result, started, model_review)
 
 

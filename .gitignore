@@ -230,6 +230,9 @@ CLAUDE.local.md
 *.key
 secrets/
 
+# Per-user league memory (H-MEM state); written at run time
+data/memory/
+
 # Agent trace logs (real runs worth keeping go in examples/)
 logs/
 

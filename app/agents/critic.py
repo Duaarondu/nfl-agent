@@ -8,6 +8,9 @@ Code checks, each giving an issue with its reason and numbers:
   artifacts        no leaked prompt labels ("[strong]"), "0.0 games" counts or missing values
   question_fit     the answer fits the question type (a "why" answer explains first)
   timing           "after X got hurt" / "since week N" changes really start that week
+  user_context     with league memory: no pickup of a player already on the user's
+                   roster, and points quoted in the league's scoring (not "PPR" in a
+                   half-PPR or standard league)
 Then one optional model review call (model_review), which falls back to the code
 checks alone if it fails, times out or has no time left.
 
@@ -69,8 +72,12 @@ METRICS = (
     (r"target share", "Opportunity", "target_share_pct", "target share"),
     (r"snap", "Opportunity", "snap_pct", "snap share"),
     (r"\btargets\b", "Opportunity", "targets", "targets"),
-    (r"", "Opportunity", "ppr_points", "PPR points"),
+    (r"", "Opportunity", "{points}", "fantasy points"),  # the scoring's points column
 )
+PICKUP_ACTIONS = ("pick up", "add")
+# "PPR" not part of "half-PPR", "half PPR", "0.5 PPR" or "non-PPR".
+FULL_PPR = re.compile(r"(?<!half-)(?<!half )(?<!0\.5 )(?<!\.5 )(?<!non-)(?<!non )\bPPR\b", re.I)
+ANY_PPR = re.compile(r"(?<!non-)(?<!non )\bPPR\b", re.I)
 
 
 @dataclass
@@ -126,6 +133,7 @@ def check_answer(result: AnalystResult) -> list[Issue]:
         *check_artifacts(result),
         *check_question_fit(result),
         *check_timing(result),
+        *check_user_context(result),
     ]
 
 
@@ -138,12 +146,16 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
     subject = result.player.name if result.player else ""
     if not name or (same_player(name, subject) and result.question_type != "replacement"):
         return []  # e.g. "Start Christian Watson" about Watson himself: nothing to compare
+    if _owned(result, name):
+        return []  # already on the user's roster: check (f) user_context covers it
     issues = []
 
     usage = _table(result, "Team usage")
     if usage:
         names, positions, recent = usage.text("player_display_name"), usage.text("position"), usage.col("recent_target_share_pct")
-        rows = [(n, p, s) for n, p, s in zip(names, positions, recent) if not same_player(n, subject)]
+        # Players already on the user's roster are not options, so they are not compared.
+        rows = [(n, p, s) for n, p, s in zip(names, positions, recent)
+                if not same_player(n, subject) and not _owned(result, n)]
         mine = next(((n, s) for n, _, s in rows if same_player(n, name)), None)
         if mine is None or mine[1] is None:
             issues.append(Issue("verdict_support", "answer", verdict,
@@ -171,7 +183,8 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
 
     without = _table(result, "Games without the player")
     if without:
-        missed = [i for i, s in enumerate(without.text("player_status")) if s == "missed"]
+        missed = [i for i, s in enumerate(without.text("player_status"))
+                  if s == "missed" and not _owned(result, without.text("player_display_name")[i])]
         if missed:
             share = without.col("avg_target_share_pct")
             best = max(missed, key=lambda i: share[i] or 0)
@@ -325,6 +338,8 @@ def _timing_problem(result: AnalystResult, sentence: str, start: int, label: str
     table = _table(result, factor)
     if not table:
         return None  # no weekly rows for this question type; nothing to test against
+    if column == "{points}":
+        column, metric = table.points, f"{table.scoring.label} points"
     by_week = {int(w): v for w, v in zip(table.text("week"), table.col(column)) if w and v is not None}
     before = [v for w, v in sorted(by_week.items()) if w < start]
     after = [v for w, v in by_week.items() if w >= start]
@@ -342,6 +357,29 @@ def _timing_problem(result: AnalystResult, sentence: str, start: int, label: str
     return None
 
 
+# --- f) league memory: the user's roster and scoring ---
+
+
+def check_user_context(result: AnalystResult) -> list[Issue]:
+    ctx = result.user_context
+    if not ctx or not ctx.remembered:
+        return []
+    issues = []
+    verdict = verdict_sentence(result.answer)
+    name = recommended_name(verdict) if verdict else None
+    if name and _action(verdict) in PICKUP_ACTIONS and ctx.owns(name):
+        issues.append(Issue("user_context", "answer", verdict,
+                            f"{name} is already on the user's roster; recommend a player who is not."))
+    if ctx.scoring != "ppr":
+        wrong = FULL_PPR if ctx.scoring == "half" else ANY_PPR
+        for sentence in sentences(result.answer):
+            if wrong.search(sentence):
+                issues.append(Issue("user_context", "answer", sentence,
+                                    f"The user's league uses {ctx.scoring_label} scoring; quote "
+                                    f"{ctx.scoring_label} points, not PPR."))
+    return issues
+
+
 # --- the optional model review ---
 
 
@@ -350,8 +388,10 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
     for q in result.queries:
         if not q.error:
             facts += [f"- {q.factor or 'Query'}: {line}" for line in factor_queries.summarize(q.factor or "", q.headers, q.rows)]
+    ctx = result.user_context.prompt_block() if result.user_context else ""
     lines = [
         result.season_context,
+        *([ctx] if ctx else []),
         f"Question: {result.asked or result.question}",
         *( [f"Premise check: {result.premise_correction}"] if result.premise_correction else [] ),
         "Facts:", *facts,
@@ -426,6 +466,10 @@ def _action(sentence: str) -> str | None:
 def _table(result: AnalystResult, factor: str):
     q = next((q for q in result.queries if q.factor == factor and not q.error and q.rows), None)
     return factor_queries._Rows(q.headers, q.rows) if q else None
+
+
+def _owned(result: AnalystResult, name: str) -> bool:
+    return bool(result.user_context and result.user_context.owns(name))
 
 
 def _team(result: AnalystResult) -> str:

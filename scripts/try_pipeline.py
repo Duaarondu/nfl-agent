@@ -1,5 +1,7 @@
 """Run one question end to end through app/pipeline.py (Analyst, then the Critic loop),
-with the live Meterless model and sample-mode data: python scripts/try_pipeline.py ["question"]
+with the live Meterless model and sample-mode data:
+    python scripts/try_pipeline.py [--user USER_ID] ["question"]
+--user turns on league memory for that user (stored in MEMORY_DIR, default data/memory/).
 
 A successful run is saved to examples/<question-slug>/<timestamp>-<run_id>/:
 answer.md (what is printed: the answer before and after the critic, each critic round
@@ -48,6 +50,14 @@ def report(run: PipelineResult) -> str:
         f"Run {result.run_id}: {len(result.queries)} queries, {len(run.critiques)} critic rounds, {run.seconds:.1f}s",
         result.season_context,
     ]
+    ctx = result.user_context
+    if ctx:
+        roster = ", ".join(f"{p.name} ({p.team}, {p.position})" for p in ctx.roster) or "none"
+        teams = f"{ctx.teams}-team, " if ctx.teams else ""
+        out += ["", f"League memory for {ctx.user_id}: {teams}{ctx.scoring_label} scoring; roster: {roster} "
+                f"({len(ctx.memory_ids)} memories retrieved)"]
+        if ctx.context:
+            out.append(ctx.context)
     if result.premise_correction:
         out += ["", f"Premise correction: {result.premise_correction}"]
     out += ["", "Answer before the critic:", run.first_answer]
@@ -107,11 +117,15 @@ def save(run: PipelineResult, text: str, group: str | None = None) -> Path:
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # model text can hold characters cp1252 lacks
-    question = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_QUESTION
+    args = sys.argv[1:]
+    user_id = None
+    if args[:1] == ["--user"]:
+        user_id, args = args[1], args[2:]
+    question = args[0] if args else DEFAULT_QUESTION
     print(f"Question: {question}\n--- trace ---")
     started = time.perf_counter()
     try:
-        run = answer(question)
+        run = answer(question, user_id=user_id)
     except AnalystError as error:
         print(f"FAILED after {time.perf_counter() - started:.1f}s: {error}")
         return 1

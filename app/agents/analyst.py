@@ -11,6 +11,9 @@ may write its own SQL with the schema in its prompt, one JSON action per turn.
 
 Evidence attached to claims and factors is the real SQL and rows from queries
 this module ran, never text from the model.
+
+With a UserContext from league memory (app.agents.memory), the factor queries compute
+points in the user's league scoring, and the verdict is written for their roster.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from typing import Any
 from app.adapters import meterless
 from app.adapters.zetaris import ZetarisError, run_sql
 from app.agents import factor_queries
+from app.agents.memory import UserContext, user_context_from_dict
 from app.trace import new_run_id, trace
 
 AGENT_NAME = "analyst"
@@ -83,7 +87,8 @@ against nflverse data. Reply with only this JSON:
 verdict starts with one of: Pick up, Add, Start, Sit, Bench, Hold, Drop, Stash.
 In "why", lead with the most supported factors and their numbers; use only numbers
 given, at most 1 decimal place. If a premise check is given, answer the corrected
-question. Do not add a disclaimer."""
+question. If a user context is given, quote points in its scoring and never recommend
+picking up a player already on its roster. Do not add a disclaimer."""
 VERDICT_ACTIONS = ("pick up", "add", "start", "sit", "bench", "hold", "drop", "stash")
 DISCLAIMER = "Informational only, based on nflverse data; not betting advice."
 
@@ -214,6 +219,7 @@ class AnalystResult:
     question_type: str = "other"
     player: factor_queries.Player | None = None
     asked: str = ""  # the question the agents answered, with any wrong premise corrected
+    user_context: UserContext | None = None  # league memory the answer was written for
 
     @property
     def queries_used(self) -> int:
@@ -245,11 +251,14 @@ class Plan:
         )
 
 
-def analyze(question: str, run_id: str | None = None, free_sql: bool | None = None) -> AnalystResult:
+def analyze(
+    question: str, run_id: str | None = None, free_sql: bool | None = None, memory: UserContext | None = None
+) -> AnalystResult:
     """Answer one fantasy question. Raises AnalystError if no valid answer comes back.
 
     free_sql (default: ANALYST_FREE_SQL env, off) lets the model write its own SQL
-    instead of interpreting only the factor queries.
+    instead of interpreting only the factor queries. memory is the user's league
+    context (scoring and roster), if any.
     """
     run_id = run_id or new_run_id()
     started = time.perf_counter()
@@ -257,7 +266,8 @@ def analyze(question: str, run_id: str | None = None, free_sql: bool | None = No
         free_sql = os.environ.get("ANALYST_FREE_SQL", "").strip().lower() in ("1", "true", "yes")
     context, season, week = _season_context(run_id)
     player_name, question_type = _classify(run_id, question)
-    plan = _run_plan(run_id, question, player_name, question_type, season, week)
+    scoring = factor_queries.SCORINGS[memory.scoring] if memory else factor_queries.PPR
+    plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory)
 
     if free_sql:
         return _sql_loop(run_id, question, context, plan)
@@ -273,9 +283,12 @@ def analyze(question: str, run_id: str | None = None, free_sql: bool | None = No
     # The agents get the question with its wrong premise already corrected from the data.
     asked = plan.corrected_question(question)
     factors = _rate_factors(run_id, asked, plan, window=window)
-    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors)
-    verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline)
-    return _assemble(run_id, question, asked, context, plan, factors, verdict, started)
+    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory)
+    verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
+                       memory=memory)
+    result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
+    result.user_context = memory
+    return result
 
 
 def result_from_dict(data: dict[str, Any]) -> AnalystResult:
@@ -298,6 +311,7 @@ def result_from_dict(data: dict[str, Any]) -> AnalystResult:
         "question_type": data.get("question_type") or factor_queries.guess_question_type(data["question"]),
         "player": player,
         "asked": data.get("asked") or data["question"],
+        "user_context": user_context_from_dict(data.get("user_context")),
     })
 
 
@@ -312,11 +326,11 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
         return
     facts = _verdict_facts(
         result.asked or result.question, result.season_context, result.premise_correction,
-        result.queries, result.factors,
+        result.queries, result.factors, result.user_context,
     )
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
-        deadline=deadline, revision=(result.answer, issues),
+        deadline=deadline, revision=(result.answer, issues), memory=result.user_context,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -411,11 +425,12 @@ def _check_rating(reply: dict[str, Any]) -> None:
 def _verdict(
     run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
-    revision: tuple[str, list[str]] | None = None,
+    revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
     revision is (previous answer, critic issues) when the critic sent the answer back.
+    The rule-based stand-in skips players already on the user's roster (memory).
     """
     note = ""
     try:
@@ -424,7 +439,8 @@ def _verdict(
     except AnalystError as error:
         results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
         ranked = [(f.factor, f.support, f.summary) for f in factors]
-        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked)
+        roster = memory.roster_names if memory else ()
+        verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster)
         note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
@@ -459,9 +475,13 @@ def _check_verdict(reply: dict[str, Any]) -> None:
 
 
 def _verdict_facts(
-    question: str, context: str, premise_note: str | None, queries: list[QueryRecord], factors: list[Factor]
+    question: str, context: str, premise_note: str | None, queries: list[QueryRecord], factors: list[Factor],
+    memory: UserContext | None = None,
 ) -> list[str]:
-    lines = [context, f"Question: {question}"]
+    lines = [context]
+    if memory and memory.prompt_block():
+        lines.append(memory.prompt_block())
+    lines.append(f"Question: {question}")
     if premise_note:
         lines.append(f"Premise check: {premise_note}")
     lines.append(f"Player: {_summary(queries[0])}")
@@ -662,9 +682,14 @@ def _season_context(run_id: str) -> tuple[str, int | None, int | None]:
 
 def _run_plan(
     run_id: str, question: str, player_name: str | None, question_type: str,
-    season: int | None, week: int | None,
+    season: int | None, week: int | None, scoring: factor_queries.Scoring = factor_queries.PPR,
+    memory: UserContext | None = None,
 ) -> Plan:
-    """Look the player up (the model's name first, then names in the question) and run their factor queries."""
+    """Look the player up (the model's name first, then names in the question) and run their factor queries.
+
+    Without a name from the model, a player the question names who is not on the user's
+    roster comes first ("my TE is George Kittle. Who replaces Mike Evans?" is about Evans).
+    """
     plan = Plan(question_type=question_type)
     candidates = factor_queries.name_candidates(question)
     if player_name:
@@ -684,10 +709,11 @@ def _run_plan(
         return plan
 
     named = [p for p in players if player_name and p.name.lower() == player_name.lower()]
-    plan.player = (named or players)[0]
+    not_owned = [p for p in players if not (memory and memory.owns(p.name))]
+    plan.player = (named or not_owned or players)[0]
     plan.queries.append(lookup)
     plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
-    for planned in factor_queries.plan(question_type, plan.player, season, week):
+    for planned in factor_queries.plan(question_type, plan.player, season, week, scoring):
         record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
         _run_query(run_id, record, action="factor_query")
         plan.queries.append(record)
