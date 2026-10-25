@@ -8,7 +8,17 @@
   },
   "users": "Fantasy football managers making waiver and lineup decisions",
   "team": [
-    "Aaron Du"
+    {
+      "name": "Aaron Du"
+    },
+    {
+      "name": "Justin Chen",
+      "contributions": [
+        "slide deck",
+        "demo script",
+        "H-MEM conflict detection, sleep cycle and dreaming services"
+      ]
+    }
   ],
   "built_from": "2026-10-22",
   "pre_existing_work": "none",
@@ -114,7 +124,8 @@
         "Critic review",
         "memory miner"
       ],
-      "traced_as": "model field of model_call trace lines (meterless.routed_model)"
+      "traced_as": "model field of model_call trace lines (meterless.routed_model)",
+      "receipts": "Nightshift Console Proof page, one receipt per request (docs/images/nightshift-receipts.png)"
     }
   ],
   "data_sources": [

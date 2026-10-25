@@ -322,7 +322,13 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
 - **NVIDIA:** every agent's model is Nemotron 3.5 Lightning
   (`nvidia/nemotron-3.5-lightning-30b-a3b`), served through Nightshift. The routed
   model the runtime reports is recorded in each `model_call` trace line and in the
-  reply's `timings.model_calls`.
+  reply's `timings.model_calls`. The Nightshift Console's Proof page keeps a receipt per
+  request: app `nfl-agent`, routed by `meterless/auto` to Nemotron 3.5 Lightning 30B A3B,
+  with input and output tokens and the cost ($0). Its Apps page lists the app, named by
+  the adapter's `meterless-app` header.
+
+  ![Nightshift receipts: nfl-agent requests routed to Nemotron 3.5 Lightning](docs/images/nightshift-receipts.png)
+  ![Nightshift apps: Nfl Agent, named via the meterless-app header](docs/images/nightshift-apps.png)
 - **Claude Code:** the project was built with Claude Code, from `CLAUDE.md`'s rules
   (adapters only, one SQL statement per call, traces, sample mode, 3 critic rounds).
   The commits are co-authored by Claude.
@@ -362,7 +368,10 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 - Meterless H-MEM spec, [github.com/Meterless/Meterless](https://github.com/Meterless/Meterless)
   `engines/hmem` (Apache-2.0), implemented in `app/engines/hmem.py`. Its deterministic
   embedder is a Python port of the reference's FNV-1a mock embedder.
-- Team: Aaron Du.
+- Team:
+  - Aaron Du.
+  - Justin Chen: slide deck, demo script, and the H-MEM conflict detection, sleep cycle
+    and dreaming services.
 
 ## Limitations
 

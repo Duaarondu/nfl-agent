@@ -153,6 +153,21 @@ end to end across two separate processes in `tests/test_memory_sessions.py`:
   `meterless.routed_model` (falling back to the response's `model`)
 - in the API reply's `timings.model_calls`
 
+**Receipts.** The Nightshift Console keeps a receipt for each request on its Proof page.
+Each one shows:
+- the app, `nfl-agent` (set by the adapter's `meterless-app` header)
+- the route, `meterless/auto`
+- the model, Nemotron 3.5 Lightning 30B A3B
+- input and output tokens
+- the cost, $0
+
+![Nightshift Console receipts: nfl-agent requests routed to Nemotron 3.5 Lightning 30B A3B](images/nightshift-receipts.png)
+
+The Apps page lists the app as "Nfl Agent", named via the `meterless-app` header, with
+its request count.
+
+![Nightshift Console apps: Nfl Agent, named via the meterless-app header](images/nightshift-apps.png)
+
 **Prompt design.** The agents' prompts are kept small for a fast model:
 - **Factor agents:** each sees one factor's computed facts, not the database schema.
 - **Reply format:** every reply is a small JSON object, validated in code. A bad reply
