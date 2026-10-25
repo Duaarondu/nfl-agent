@@ -231,3 +231,17 @@ def test_rule_verdicts(real_sample):
     assert fq.rule_verdict("why", WATSON, {}, [("Matchups", "not supported", "x")]) == (
         "Hold Christian Watson", "No factor is strongly supported by the data. Not supported: Matchups.",
     )
+
+
+def test_planned_sql_never_orders_by_an_aggregate():
+    """Spark (live Zetaris) rejects ORDER BY SUM(targets) when SUM(targets) AS targets is selected;
+    DuckDB (sample mode) accepts it, so only live runs failed (run 7bfa81c3abf1, 2026-10-25)."""
+    queries = [*fq.why_bundle(WATSON, SEASON), *fq.team_bundle(WATSON, SEASON, WEEK),
+               fq.games_without_query(WATSON, SEASON)]
+    for s in fq.SCORINGS.values():
+        queries += fq.team_bundle(WATSON, SEASON, WEEK, s)
+    for q in queries:
+        for order_by in re.findall(r"ORDER BY ([^)]*?)(?: LIMIT|$|\))", q.sql):
+            assert not re.search(r"\b(SUM|AVG|COUNT|MIN|MAX)\(", order_by), (q.factor, order_by)
+    usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]
+    assert "ORDER BY targets DESC LIMIT 12" in usage.sql

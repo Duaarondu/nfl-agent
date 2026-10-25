@@ -1,11 +1,14 @@
 """Run one question end to end through app/pipeline.py (Analyst, then the Critic loop),
-with the live Meterless model and sample-mode data:
-    python scripts/try_pipeline.py [--user USER_ID] ["question"]
---user turns on league memory for that user (stored in MEMORY_DIR, default data/memory/).
+with the live Meterless model:
+    python scripts/try_pipeline.py [--live] [--user USER_ID] ["question"]
+Data comes from sample mode (data/sample/) unless --live, which queries the live Zetaris
+cluster (SAMPLE_MODE=false). --user turns on league memory for that user (stored in
+MEMORY_DIR, default data/memory/).
 
 A successful run is saved to examples/<question-slug>/<timestamp>-<run_id>/:
-answer.md (what is printed: the answer before and after the critic, each critic round
-and its issues), result.json (the full result) and trace.jsonl.
+answer.md (what is printed: where the data came from, which steps were model vs
+rule-based, the answer before and after the critic, each critic round and its issues),
+response.json (the POST /run reply), result.json (the full result) and trace.jsonl.
 """
 
 from __future__ import annotations
@@ -21,7 +24,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-os.environ["SAMPLE_MODE"] = "true"  # data from data/sample/; the model call is live
+LIVE = "--live" in sys.argv[1:]
+os.environ["SAMPLE_MODE"] = "false" if LIVE else "true"  # the model calls are live either way
 
 from app import trace as trace_module  # noqa: E402
 from app.agents.analyst import AnalystError  # noqa: E402
@@ -45,7 +49,7 @@ def rows_text(headers: list[str], rows: list[list], limit: int = 20) -> list[str
 
 def report(run: PipelineResult) -> str:
     result = run.result
-    out = [
+    out = [*run_header(run), "",
         f"Question: {result.question}",
         f"Run {result.run_id}: {len(result.queries)} queries, {len(run.critiques)} critic rounds, {run.seconds:.1f}s",
         result.season_context,
@@ -93,6 +97,47 @@ def report(run: PipelineResult) -> str:
     return "\n".join(out)
 
 
+def run_reply(run: PipelineResult) -> dict:
+    """The POST /run reply for this run (run.py), from its saved trace lines."""
+    import run as entry  # repo root, on sys.path above
+
+    lines = [json.loads(l) for l in trace_lines(run.result.run_id)]
+    return entry.to_json(run, lines, run.seconds)
+
+
+def run_header(run: PipelineResult) -> list[str]:
+    reply = run_reply(run)
+    steps, t = reply["steps"], reply["timings"]
+    source = ("live Zetaris cluster (SAMPLE_MODE=false)" if os.environ.get("SAMPLE_MODE") == "false"
+              else "sample mode: cached nflverse slice in data/sample/ (SAMPLE_MODE=true)")
+    factors = steps["factors"]
+    by_model = [f for f, by in factors.items() if by == "model"]
+    by_rule = [f for f, by in factors.items() if by != "model"]
+    models = sorted({c["model"] for c in t["model_calls"] if c.get("model")})
+    lines = [
+        f"Data: {source}.",
+        f"Models: Meterless Nightshift ({', '.join(models) or 'no successful model call'}).",
+        "Steps (model vs rule-based):",
+        f"  planner: {steps['planner']}",
+    ]
+    if steps["memory_mining"]:
+        lines.append(f"  memory mining: {steps['memory_mining']}")
+    lines += [
+        f"  factors by model: {', '.join(by_model) or 'none'}",
+        f"  factors by rules: {', '.join(by_rule) or 'none'}",
+        f"  first verdict: {steps['first_verdict']}; final verdict: {steps['final_verdict']}",
+        f"  critic reviews: {', '.join(steps['critic_reviews'])}",
+        f"Timings: total {t['total_ms'] / 1000:.1f}s; "
+        + ", ".join(f"{k} {v / 1000:.1f}s" for k, v in sorted(t["agent_busy_ms"].items()))
+        + " (busy time; factor agents run in parallel)",
+    ]
+    failed = [c for c in t["model_calls"] if c["status"] != "ok"]
+    if failed:
+        lines.append("Failed or skipped model calls: " + "; ".join(
+            f"{c['agent']} {c['step']} ({c['status']}, {c['duration_ms'] / 1000:.1f}s)" for c in failed))
+    return lines
+
+
 def trace_lines(run_id: str) -> list[str]:
     lines = []
     for path in sorted(trace_module.LOG_DIR.glob("trace-*.jsonl")):
@@ -112,12 +157,15 @@ def save(run: PipelineResult, text: str, group: str | None = None) -> Path:
         json.dumps(dataclasses.asdict(run), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (folder / "trace.jsonl").write_text("\n".join(trace_lines(result.run_id)) + "\n", encoding="utf-8")
+    (folder / "response.json").write_text(
+        json.dumps(run_reply(run), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return folder
 
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # model text can hold characters cp1252 lacks
-    args = sys.argv[1:]
+    args = [a for a in sys.argv[1:] if a != "--live"]
     user_id = None
     if args[:1] == ["--user"]:
         user_id, args = args[1], args[2:]

@@ -319,7 +319,7 @@ def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> l
             f"SUM(carries) AS carries, ROUND(AVG({s.expr()}), 1) AS {s.key}_per_game "
             f"FROM NFLVERSE.player_stats WHERE season = {season} AND team = {team} "
             "AND position IN ('RB', 'WR', 'TE') "
-            "GROUP BY player_display_name, position ORDER BY SUM(targets) DESC LIMIT 12",
+            "GROUP BY player_display_name, position ORDER BY targets DESC LIMIT 12",
         ),
         PlannedQuery(
             "Depth chart",
