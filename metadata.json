@@ -1,0 +1,111 @@
+{
+  "name": "NFL Fantasy Agent",
+  "repository": "https://github.com/Duaarondu/nfl-agent",
+  "hackathon": "Open Agent Hackathon 2026",
+  "track": {
+    "number": 2,
+    "name": "The Agent That Can Explain Why"
+  },
+  "users": "Fantasy football managers making waiver and lineup decisions",
+  "team": ["Aaron Du"],
+  "built_from": "2026-10-22",
+  "pre_existing_work": "none",
+  "language": "Python 3.10+",
+  "license": "MIT",
+  "agents": [
+    {
+      "name": "Planner",
+      "file": "app/agents/planner.py",
+      "role": "Classifies the question type and extracts the player names (one model call; keyword-rule fallback)."
+    },
+    {
+      "name": "Analyst",
+      "file": "app/agents/analyst.py",
+      "role": "Looks the player(s) up and corrects a wrong premise from the rosters table. Runs the planned factor queries through Zetaris, then one factor agent per factor in parallel (rule fallback) and the verdict.",
+      "sub_agents": "factor_agent:<factor>, one per factor, in parallel",
+      "queries": "app/agents/factor_queries.py"
+    },
+    {
+      "name": "Critic",
+      "file": "app/agents/critic.py",
+      "role": "Code checks: verdict support, numbers, artifacts, question fit, timing, league memory, compare. Then an optional model review; blocking issues send the verdict back for revision.",
+      "max_rounds": 3
+    }
+  ],
+  "question_types": ["why", "replacement", "compare", "start_sit", "waiver", "other"],
+  "features": {
+    "premise_correction": "A wrong team in the question is corrected from the rosters table before the agents answer.",
+    "league_memory": "With a user_id: league size, scoring and roster are stored and retrieved with the H-MEM engine.",
+    "provenance": "Each claim carries its SQL and rows; each reply says which steps a model or the code rules produced.",
+    "disclaimer": "Informational only, based on nflverse data; not betting advice."
+  },
+  "meterless": {
+    "nightshift": {
+      "role": "Only model provider: every model call goes through its OpenAI-compatible API.",
+      "adapter": "app/adapters/meterless.py",
+      "calls": ["planner classify", "factor agents", "verdict", "verdict revision", "critic model review", "league-memory mining (only when code cannot parse the cues)"]
+    },
+    "engines_used": [
+      {
+        "engine": "H-MEM",
+        "implementation": "app/engines/hmem.py",
+        "spec": "https://github.com/Meterless/Meterless engines/hmem (Apache-2.0), commit 1742dec",
+        "version": "minimum: MemoryStoreService, MemoryRetrievalService, TrustLedgerService, model extraction of MemoryMiningService",
+        "feature": "League memory (app/agents/memory.py), turned on by user_id in POST /run. Scoring and team count are stored, and so are rostered and dropped players. Retrieved records set the scoring of the factor queries, stop rule-based pickups of rostered players and feed critic check (f).",
+        "where_in_pipeline": "app/pipeline.py: memory.remember (store, then retrieve) runs before the Planner",
+        "conformance": "10/13 checks of the official runner pass; the 3 failures are the omitted sleep, conflict and dreaming services",
+        "conformance_doc": "docs/hmem-conformance.md",
+        "tests": ["tests/test_hmem.py", "tests/test_memory.py", "tests/test_memory_sessions.py"]
+      }
+    ]
+  },
+  "zetaris": {
+    "role": "All live data. Every fact in an answer comes from a SQL query through run_sql, one statement per call.",
+    "adapter": "app/adapters/zetaris.py",
+    "route": "POST {ZETARIS_BASE_URL}/api/proxy/sql-editor/sqls/run-query",
+    "database": "NFLVERSE",
+    "tables": ["player_stats", "pbp", "snap_counts", "depth_charts", "injuries", "rosters", "schedules"],
+    "setup": ["sql/nflverse_create.sql", "sql/nflverse_cache.sql"],
+    "storage": "Parquet on S3, registered as Zetaris Lightning filestore tables",
+    "spark_sweep": "scripts/check_factor_queries_live.py",
+    "sample_mode": "SAMPLE_MODE=true runs the same SQL on DuckDB against data/sample/"
+  },
+  "models": [
+    {
+      "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "provider": "NVIDIA, served through Meterless Nightshift",
+      "used_by": ["Planner", "factor agents", "Analyst verdict", "Critic review", "memory miner"],
+      "traced_as": "model field of model_call trace lines (meterless.routed_model)"
+    }
+  ],
+  "data_sources": [
+    {
+      "name": "nflverse",
+      "via": "nflreadpy",
+      "license": "CC-BY 4.0",
+      "coverage": "Season 2026, weeks 1-6 of stats; rosters and depth charts as of week 7; schedules to week 18"
+    },
+    {
+      "name": "FTN charting data",
+      "attribution": "FTN Data via nflverse",
+      "license": "CC-BY-SA 4.0",
+      "note": "Credited as the project requires; the current build does not load the FTN charting table."
+    }
+  ],
+  "entry_points": {
+    "api": "run.py: POST /run, GET /trace/<run_id>, GET /trace/<run_id>.jsonl, GET /health (port 8000)",
+    "ui": "app/ui/ served by run.py on port 8080",
+    "cli": "python run.py \"question\" [--user ID]",
+    "pipeline": "app/pipeline.py: answer(question, user_id=...)",
+    "live_examples": "scripts/try_pipeline.py --live [--user ID] \"question\"",
+    "critic_demo": "scripts/demo_critic.py",
+    "docker": "Dockerfile (exposes 8000 and 8080)",
+    "tests": "pytest (301 tests)",
+    "ci": ".github/workflows/ci.yml"
+  },
+  "traces": {
+    "where": "stdout and logs/trace-<YYYYMMDD>.jsonl",
+    "fields": ["timestamp", "run_id", "agent_name", "action", "target_agent", "status", "retry_count", "sql", "model", "rows_returned"]
+  },
+  "examples": "examples/ (live runs; examples/critic-demo-* starts from a saved Analyst answer)"
+}
