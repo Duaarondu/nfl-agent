@@ -123,11 +123,9 @@ to implement, not a package.
   retrieved IDs and their scores.
 
 **Conformance.** The official conformance runner is run unmodified through a thin
-TypeScript-to-Python bridge in `scripts/hmem_conformance/`.
-<!-- TODO before submitting: rerun the official runner and replace the next two sentences with its score. -->
-It passed **10 of 13** checks before the sleep cycle, conflict detection and dreaming
-were built; the 3 failures were those services. All 13 vector checks now pass in our
-own runs through the same bridge. Two departures from the spec are deliberate, and both
+TypeScript-to-Python bridge in `scripts/hmem_conformance/`. It passes **13 of 13**
+checks (2026-10-25, commit `b2d8c7a`). Before the sleep cycle, conflict detection and
+dreaming were built it passed 10 of 13; the 3 failures were those services. Two departures from the spec are deliberate, and both
 are documented:
 - **Recall scope:** recall is per user, not per chat.
 - **Retrieval limits:** league facts use threshold 0 and top N 15, because they are

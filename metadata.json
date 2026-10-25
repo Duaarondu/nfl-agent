@@ -79,7 +79,7 @@
         "version": "all seven spec services: MemoryStoreService, MemoryRetrievalService, TrustLedgerService, model extraction of MemoryMiningService, ConflictDetectionService, SleepCycleService, DreamingService",
         "feature": "League memory (app/agents/memory.py), turned on by user_id in POST /run. Scoring and team count are stored, and so are rostered and dropped players. Retrieved records set the scoring of the factor queries, stop rule-based pickups of rostered players and feed critic check (f).",
         "where_in_pipeline": "app/pipeline.py: memory.remember (store, then retrieve) runs before the Planner",
-        "conformance": "All 13 conformance vector checks pass in our runs through the bridge; the official runner scored 10/13 before the sleep, conflict and dreaming services were added (rerun pending)",
+        "conformance": "13/13 checks of the official runner pass (2026-10-25, commit b2d8c7a); 10/13 before the sleep, conflict and dreaming services were added",
         "conformance_doc": "docs/hmem-conformance.md",
         "tests": [
           "tests/test_hmem.py",

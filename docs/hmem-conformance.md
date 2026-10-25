@@ -11,14 +11,49 @@ It has all seven services in spec section 11: `MemoryStoreService`,
 `MemoryMiningService`, `ConflictDetectionService`, `SleepCycleService` and
 `DreamingService`.
 
-## Result
+## Result: 13 of 13 checks pass
 
-<!-- TODO before submitting: rerun the official runner (command under "How the runner
-reaches Python code"), paste its output here verbatim, and replace this section's
-first paragraph with the date, versions, commit and score. -->
+Run on 2026-10-25, Windows 11 Enterprise, Node v24.12.0, tsx v4.23.15, Python 3.10.11.
+Our code at commit `b2d8c7a` (which includes Justin Chen's `9ceb01f`: conflict detection,
+sleep cycle and dreaming), with the shim in `scripts/hmem_conformance/`. A fresh clone of
+the spec at `1742dec`, with no local changes; the runner was not modified, and its
+`vectors/vectors.json` is byte-identical to `tests/data/hmem_conformance_vectors.json`.
+The runner exited with code 0. The output, verbatim:
 
-**All 13 vector checks now pass in our own runs. The official runner hasn't been rerun
-since the last three services were added.**
+```
+H-MEM conformance: implementation = C:/Users/duaar/nfl-agent/scripts/hmem_conformance/index.ts
+
+  record-validation
+    PASS rv-001 a record with no source is rejected by construction
+    PASS rv-002 a record with a source is accepted
+
+  feedback-deltas
+    PASS fd-001 helpful adds exactly +0.05 confidence and +1 accessCount
+    PASS fd-002 not_helpful subtracts exactly 0.03
+    PASS fd-003 wrong subtracts exactly 0.20 and adds the review tag
+    PASS fd-004 confidence clamps at 0 (wrong at 0.1)
+    PASS fd-005 confidence clamps at 1 (helpful at 0.98)
+
+  ranking-order
+    PASS ro-001 superseded penalty dominates: a superseded record ranks below a fresh one with identical content relevance
+    PASS ro-002 confidence multiplies the whole score: identical records rank by confidence
+
+  sleep-guardrails
+    PASS sg-001 old low-access plain record archives; dream-derived record with identical age does not
+
+  conflict-gate
+    PASS cg-001 auto-resolve marks the loser supersededBy and deletes nothing
+
+  ledger-audit
+    PASS la-001 create then feedback reconstructs: actions in order, previous and new confidence present
+
+  dream-boundary
+    PASS db-001 dream proposals never materialize before approval; approval creates a long_term record with lineage
+
+  13/13 checks passed
+```
+
+Our own tests also cover the three newer checks:
 
 - `tests/test_hmem_services.py` runs the three checks that failed before (sg-001,
   cg-001, db-001) from the official vectors file, copied unchanged to
