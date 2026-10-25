@@ -11,6 +11,7 @@ def test_model_route_and_handoff(model, trace_dir):
     route = planner.plan("r1", "Who becomes the Bucs' WR1 if Mike Evans is out?")
     assert route == planner.Route("Mike Evans", "replacement", "model")
     assert model.calls[0][0]["content"] == planner.PROMPT and model.kwargs[0]["timeout"] == planner.TIMEOUT
+    assert model.kwargs[0]["max_tokens"] == planner.MAX_TOKENS == 4096
     lines = read_trace(trace_dir)
     assert [(l["agent_name"], l["action"], l["status"], l["target_agent"]) for l in lines] == [
         ("planner", "model_call", "ok", None),

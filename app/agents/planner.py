@@ -23,7 +23,7 @@ Read one fantasy football question. Reply with only this JSON:
 why: explain a player's production. replacement: who takes over if a player is out.
 start_sit: start or bench. waiver: pick up, add or drop.
 For a replacement question, player_name is the player who is out."""
-MAX_TOKENS = 1024
+MAX_TOKENS = 4096  # Lightning thinks before replying; 1024 ran out (HTTP 502 empty_response)
 TIMEOUT = 30
 
 
