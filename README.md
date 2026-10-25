@@ -130,9 +130,13 @@ Open <http://localhost:8080>. With no env file the container uses **sample mode*
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip
-.venv/bin/python run.py                          # API on 8000, UI on 8080
+.venv/bin/pip install -r requirements.txt   # Windows: .venv\Scripts\pip install -r requirements.txt
+.venv/bin/python run.py                     # Windows: .venv\Scripts\python run.py
 ```
+
+`python run.py` with no question starts both servers (API on 8000, UI on 8080), the same
+as `python run.py --serve`; `--port`, `--ui-port` (or `PORT`, `UI_PORT`) and `--no-ui`
+change that. A port already in use fails to bind; it is never shared.
 
 Python 3.10+. Dependencies: duckdb, nflreadpy, polars, pytest. The servers use the
 standard library.
@@ -222,6 +226,8 @@ Other routes:
 
 ### CLI
 
+With the venv active (or with `.venv/bin/python` in place of `python`):
+
 ```bash
 python run.py "Why is Christian Watson scoring so many fantasy points this season?"
 python run.py "Who should I start, Jameson Williams or George Pickens?" --user demo
@@ -297,8 +303,10 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
   - **Queries:** every fact in an answer comes from a SQL query through `run_sql`, one
     statement per call. The queries are plain SQL that runs on both Spark SQL and
     DuckDB.
-  - **Spark sweep:** `scripts/check_factor_queries_live.py` runs every planned query
-    against the live cluster, to catch SQL that DuckDB accepts but Spark rejects.
+  - **Spark sweep:** `scripts/check_factor_queries_live.py` runs every planned query,
+    for every question type including compare and in every scoring, against the live
+    cluster. It catches SQL that DuckDB accepts but Spark rejects. Last run: 148 distinct
+    queries, 0 SQL errors.
 - **Meterless:**
   - **Nightshift runtime:** the only model provider, reached through its
     OpenAI-compatible API in `app/adapters/meterless.py`.
@@ -335,14 +343,20 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
   schedules to week 18. Built by `scripts/build_sample_data.py`. `data/sample/` holds
   the committed copy (under 5 MB per table); `data/full/` is gitignored.
 
-Code: MIT ([LICENSE](LICENSE)).
+Code: MIT ([LICENSE](LICENSE)), except the parts adapted from Apache-2.0 projects
+listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 
 ## Credits
 
-- Zetaris getting-started adapter code, for the UI-proxy SQL route used in
-  `app/adapters/zetaris.py`.
+- `app/adapters/zetaris.py` is adapted from
+  [`scripts/query_zetaris.py`](https://github.com/zetaris/getting-started/blob/main/scripts/query_zetaris.py)
+  (the UI-proxy run-query call) and its helper `scripts/zetaris_api.py` (the authenticated
+  request) in [zetaris/getting-started](https://github.com/zetaris/getting-started), Apache-2.0.
+  The file's header lists what we changed; the licence text is in
+  [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 - Meterless H-MEM spec, [github.com/Meterless/Meterless](https://github.com/Meterless/Meterless)
-  `engines/hmem` (Apache-2.0), implemented in `app/engines/hmem.py`.
+  `engines/hmem` (Apache-2.0), implemented in `app/engines/hmem.py`. Its deterministic
+  embedder is a Python port of the reference's FNV-1a mock embedder.
 - Team: Aaron Du.
 
 ## Limitations

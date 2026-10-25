@@ -1,5 +1,12 @@
 """Zetaris adapter: every data query goes through run_sql().
 
+Adapted from scripts/query_zetaris.py (the run-query call) and scripts/zetaris_api.py
+(the authenticated request) in github.com/zetaris/getting-started (Apache-2.0;
+licence text in LICENSES/Apache-2.0.txt). Changed: a run_sql() function instead of a
+command-line script; settings from the repo's .env; one SQL statement per call; a
+configurable timeout (ZETARIS_TIMEOUT_SECONDS); one retry on transient cluster errors;
+sample mode (DuckDB on data/sample/); and the cached-result fallback.
+
 Uses the Zetaris UI-proxy route (POST /api/proxy/sql-editor/sqls/run-query).
 Settings come from the repo's .env (never overrides variables already set):
 

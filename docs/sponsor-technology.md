@@ -47,14 +47,18 @@ queries (`app/agents/factor_queries.py`):
 
 **Spark sweep.** `scripts/check_factor_queries_live.py` runs every planned query
 against the live cluster:
-- **Question types:** why, replacement, start_sit, waiver and other.
+- **Question types:** why, replacement, start_sit, waiver and other, plus compare for
+  two pairs (Jameson Williams vs George Pickens, and Christian McCaffrey vs Mike Evans,
+  an RB against a WR).
 - **Scoring:** PPR, half-PPR and standard.
-- **Players:** four (Christian Watson, Mike Evans, Puka Nacua and Christian McCaffrey).
+- **Players:** six (Christian Watson, Mike Evans, Puka Nacua, Christian McCaffrey,
+  Jameson Williams and George Pickens).
 - **Purpose:** it catches SQL that DuckDB accepts but Spark rejects.
 - **Errors:** cluster and transport errors are retried once and reported separately
   from SQL errors.
-- **Compare queries:** the sweep does not run them yet. They ran live in the Williams
-  vs Pickens example.
+- **Last run (25 October 2026):** 148 distinct queries, 0 SQL errors. One query hit a
+  Thrift `TTransportException` twice and passed when rerun on its own. All 30 compare
+  queries passed.
 
 **Fallbacks.**
 - **Retry:** a live query that fails fast with a transient cluster error (Thrift

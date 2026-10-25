@@ -7,6 +7,7 @@ Team usage ORDER BY SUM(targets) bug, run 7bfa81c3abf1). This runs, live:
   - the season context and player lookup queries the Analyst runs first,
   - every factor query for every question type (why, replacement, start_sit, waiver,
     other) in every league scoring (PPR, half-PPR, standard),
+  - the compare (two players, head to head) queries for COMPARE_PAIRS in every scoring,
   - league memory's roster lookup,
 for Christian Watson, Mike Evans, Puka Nacua and Christian McCaffrey (RB). Identical
 SQL is run once, and each is timed.
@@ -32,7 +33,10 @@ from app.adapters.zetaris import ZetarisError, run_sql  # noqa: E402
 from app.agents import factor_queries as fq  # noqa: E402
 from app.agents import memory  # noqa: E402
 
-PLAYERS = ("Christian Watson", "Mike Evans", "Puka Nacua", "Christian McCaffrey")
+PLAYERS = ("Christian Watson", "Mike Evans", "Puka Nacua", "Christian McCaffrey",
+           "Jameson Williams", "George Pickens")
+# Two WRs, and an RB vs a WR (the matchup query ranks points allowed per position).
+COMPARE_PAIRS = (("Jameson Williams", "George Pickens"), ("Christian McCaffrey", "Mike Evans"))
 SLOW_SECONDS = 20.0
 RETRY_PAUSE = 15.0
 SEASON_SQL = "SELECT MAX(season) AS season, MAX(week) AS latest_week FROM NFLVERSE.player_stats"
@@ -73,9 +77,16 @@ def main() -> int:
 
     for p in players:
         for qt in fq.QUESTION_TYPES:
+            if qt == "compare":
+                continue  # two players: below
             for scoring in fq.SCORINGS.values():
                 for planned in fq.plan(qt, p, season, week, scoring):
                     queries.setdefault(planned.sql, []).append(f"{p.name} / {qt} / {scoring.label} / {planned.factor}")
+    by_name = {n: next(p for p in players if fq.same_player(p.name, n)) for n in PLAYERS}
+    for a, b in COMPARE_PAIRS:
+        for scoring in fq.SCORINGS.values():
+            for planned in fq.compare_bundle([by_name[a], by_name[b]], season, week, scoring):
+                queries.setdefault(planned.sql, []).append(f"{a} vs {b} / compare / {scoring.label} / {planned.factor}")
     _, _, roster_sql = memory.resolve_players(["George Kittle", "Adams"])
     queries.setdefault(roster_sql, []).append("league memory roster lookup")
 

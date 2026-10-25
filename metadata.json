@@ -7,7 +7,9 @@
     "name": "The Agent That Can Explain Why"
   },
   "users": "Fantasy football managers making waiver and lineup decisions",
-  "team": ["Aaron Du"],
+  "team": [
+    "Aaron Du"
+  ],
   "built_from": "2026-10-22",
   "pre_existing_work": "none",
   "language": "Python 3.10+",
@@ -32,7 +34,14 @@
       "max_rounds": 3
     }
   ],
-  "question_types": ["why", "replacement", "compare", "start_sit", "waiver", "other"],
+  "question_types": [
+    "why",
+    "replacement",
+    "compare",
+    "start_sit",
+    "waiver",
+    "other"
+  ],
   "features": {
     "premise_correction": "A wrong team in the question is corrected from the rosters table before the agents answer.",
     "league_memory": "With a user_id: league size, scoring and roster are stored and retrieved with the H-MEM engine.",
@@ -43,7 +52,14 @@
     "nightshift": {
       "role": "Only model provider: every model call goes through its OpenAI-compatible API.",
       "adapter": "app/adapters/meterless.py",
-      "calls": ["planner classify", "factor agents", "verdict", "verdict revision", "critic model review", "league-memory mining (only when code cannot parse the cues)"]
+      "calls": [
+        "planner classify",
+        "factor agents",
+        "verdict",
+        "verdict revision",
+        "critic model review",
+        "league-memory mining (only when code cannot parse the cues)"
+      ]
     },
     "engines_used": [
       {
@@ -55,7 +71,11 @@
         "where_in_pipeline": "app/pipeline.py: memory.remember (store, then retrieve) runs before the Planner",
         "conformance": "10/13 checks of the official runner pass; the 3 failures are the omitted sleep, conflict and dreaming services",
         "conformance_doc": "docs/hmem-conformance.md",
-        "tests": ["tests/test_hmem.py", "tests/test_memory.py", "tests/test_memory_sessions.py"]
+        "tests": [
+          "tests/test_hmem.py",
+          "tests/test_memory.py",
+          "tests/test_memory_sessions.py"
+        ]
       }
     ]
   },
@@ -64,17 +84,35 @@
     "adapter": "app/adapters/zetaris.py",
     "route": "POST {ZETARIS_BASE_URL}/api/proxy/sql-editor/sqls/run-query",
     "database": "NFLVERSE",
-    "tables": ["player_stats", "pbp", "snap_counts", "depth_charts", "injuries", "rosters", "schedules"],
-    "setup": ["sql/nflverse_create.sql", "sql/nflverse_cache.sql"],
+    "tables": [
+      "player_stats",
+      "pbp",
+      "snap_counts",
+      "depth_charts",
+      "injuries",
+      "rosters",
+      "schedules"
+    ],
+    "setup": [
+      "sql/nflverse_create.sql",
+      "sql/nflverse_cache.sql"
+    ],
     "storage": "Parquet on S3, registered as Zetaris Lightning filestore tables",
     "spark_sweep": "scripts/check_factor_queries_live.py",
-    "sample_mode": "SAMPLE_MODE=true runs the same SQL on DuckDB against data/sample/"
+    "sample_mode": "SAMPLE_MODE=true runs the same SQL on DuckDB against data/sample/",
+    "adapted_from": "github.com/zetaris/getting-started scripts/query_zetaris.py and scripts/zetaris_api.py (Apache-2.0)"
   },
   "models": [
     {
       "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "provider": "NVIDIA, served through Meterless Nightshift",
-      "used_by": ["Planner", "factor agents", "Analyst verdict", "Critic review", "memory miner"],
+      "used_by": [
+        "Planner",
+        "factor agents",
+        "Analyst verdict",
+        "Critic review",
+        "memory miner"
+      ],
       "traced_as": "model field of model_call trace lines (meterless.routed_model)"
     }
   ],
@@ -105,7 +143,19 @@
   },
   "traces": {
     "where": "stdout and logs/trace-<YYYYMMDD>.jsonl",
-    "fields": ["timestamp", "run_id", "agent_name", "action", "target_agent", "status", "retry_count", "sql", "model", "rows_returned"]
+    "fields": [
+      "timestamp",
+      "run_id",
+      "agent_name",
+      "action",
+      "target_agent",
+      "status",
+      "retry_count",
+      "sql",
+      "model",
+      "rows_returned"
+    ]
   },
-  "examples": "examples/ (live runs; examples/critic-demo-* starts from a saved Analyst answer)"
+  "examples": "examples/ (live runs; examples/critic-demo-* starts from a saved Analyst answer)",
+  "third_party_licences": "LICENSES/Apache-2.0.txt (Zetaris getting-started adapter code; Meterless H-MEM spec)"
 }
