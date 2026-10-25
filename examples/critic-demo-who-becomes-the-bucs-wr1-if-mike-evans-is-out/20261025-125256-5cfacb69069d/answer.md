@@ -1,6 +1,6 @@
 ```
 DEMO - starts from a SAVED Analyst answer, not a fresh Analyst run.
-Source: examples/who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261022-234321-d52e2e813360 (Analyst run d52e2e813360, Oct 22). Its answer, factors and query rows
+Source: examples/archive/who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261022-234321-d52e2e813360 (Analyst run d52e2e813360, Oct 22). Its answer, factors and query rows
 were loaded as saved; only the critique -> revise loop below ran live.
 
 Question: Who becomes the Bucs' WR1 if Mike Evans is out?

@@ -22,7 +22,7 @@ from app.agents.analyst import result_from_dict
 from app.pipeline import review
 from app.trace import new_run_id, trace
 
-SOURCE = try_pipeline.EXAMPLES_DIR / "who-becomes-the-bucs-wr1-if-mike-evans-is-out" / "20261022-234321-d52e2e813360"
+SOURCE = try_pipeline.EXAMPLES_DIR / "archive" / "who-becomes-the-bucs-wr1-if-mike-evans-is-out" / "20261022-234321-d52e2e813360"
 
 
 def main() -> int:
