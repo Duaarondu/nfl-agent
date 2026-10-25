@@ -122,3 +122,17 @@ def test_model_review_setting(real_sample, model, monkeypatch, setting, review_c
     script(model, [KITTLE])
     pipeline.answer(BUCS)
     assert len(calls(model, critic.REVIEW_PROMPT)) == review_calls
+
+
+def test_review_runs_the_loop_on_a_saved_answer(model, trace_dir):
+    """What scripts/demo_critic.py does: the Oct 22 "Start Deebo Samuel" answer, no Analyst run."""
+    from helpers import load_example
+
+    script(model, [KITTLE])
+    run = pipeline.review(load_example("who-becomes-the-bucs", run="d52e2e813360"))
+
+    assert run.first_answer.startswith("Start Deebo Samuel. The depth chart [strong]")
+    assert [c.status for c in run.critiques] == ["needs_revision", "approved"]
+    assert {i.check for i in run.critiques[0].blocking} == {"verdict_support", "artifacts"}
+    assert run.result.answer.startswith("Pick up George Kittle.")
+    assert not calls(model, analyst.FACTOR_PROMPT) and not calls(model, analyst.CLASSIFY_PROMPT)

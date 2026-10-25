@@ -41,11 +41,20 @@ def answer(question: str, run_id: str | None = None, model_review: bool | None =
     """
     run_id = run_id or new_run_id()
     started = time.perf_counter()
+    result = analyst.analyze(question, run_id=run_id)
+    return review(result, started, model_review)
+
+
+def review(result: AnalystResult, started: float | None = None, model_review: bool | None = None) -> PipelineResult:
+    """The critique -> revise loop on an Analyst answer; updates result in place.
+
+    started (a time.perf_counter() value) is when the run began, for the RUN_BUDGET.
+    """
+    started = time.perf_counter() if started is None else started
     deadline = started + RUN_BUDGET
     if model_review is None:
         model_review = os.environ.get("CRITIC_MODEL_REVIEW", "true").strip().lower() not in ("0", "false", "no")
-
-    result = analyst.analyze(question, run_id=run_id)
+    run_id = result.run_id
     first_answer = result.answer
     critiques: list[Critique] = []
     for round in range(1, MAX_ROUNDS + 1):

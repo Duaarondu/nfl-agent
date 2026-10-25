@@ -278,6 +278,29 @@ def analyze(question: str, run_id: str | None = None, free_sql: bool | None = No
     return _assemble(run_id, question, asked, context, plan, factors, verdict, started)
 
 
+def result_from_dict(data: dict[str, Any]) -> AnalystResult:
+    """An AnalystResult from its saved JSON (examples/*/result.json).
+
+    Accepts a pipeline run (the result sits under "result"). Runs saved before the
+    Critic existed lack question_type, player and asked; they are rebuilt from the
+    question and the player lookup rows.
+    """
+    data = data.get("result", data)
+    ev = lambda items: [Evidence(**e) for e in items]
+    queries = [QueryRecord(**q) for q in data["queries"]]
+    player = data.get("player")
+    player = factor_queries.Player(**player) if player else factor_queries.parse_players(queries[0].rows, data["question"])[0]
+    return AnalystResult(**{
+        **data,
+        "claims": [Claim(c["text"], ev(c["evidence"])) for c in data["claims"]],
+        "factors": [Factor(**{**f, "evidence": ev(f["evidence"])}) for f in data["factors"]],
+        "queries": queries,
+        "question_type": data.get("question_type") or factor_queries.guess_question_type(data["question"]),
+        "player": player,
+        "asked": data.get("asked") or data["question"],
+    })
+
+
 def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, round: int) -> None:
     """Rerun only the verdict step, with the critic's issues in the prompt; updates result.
 

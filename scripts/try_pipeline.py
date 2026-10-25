@@ -92,9 +92,10 @@ def trace_lines(run_id: str) -> list[str]:
     return lines
 
 
-def save(run: PipelineResult, text: str) -> Path:
+def save(run: PipelineResult, text: str, group: str | None = None) -> Path:
+    """Write the run to examples/<group or question slug>/<timestamp>-<run_id>/."""
     result = run.result
-    folder = EXAMPLES_DIR / slug(result.question) / f"{datetime.now():%Y%m%d-%H%M%S}-{result.run_id}"
+    folder = EXAMPLES_DIR / (group or slug(result.question)) / f"{datetime.now():%Y%m%d-%H%M%S}-{result.run_id}"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "answer.md").write_text(f"```\n{text}\n```\n", encoding="utf-8")
     (folder / "result.json").write_text(
