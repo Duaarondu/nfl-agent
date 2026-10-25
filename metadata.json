@@ -66,13 +66,14 @@
         "engine": "H-MEM",
         "implementation": "app/engines/hmem.py",
         "spec": "https://github.com/Meterless/Meterless engines/hmem (Apache-2.0), commit 1742dec",
-        "version": "minimum: MemoryStoreService, MemoryRetrievalService, TrustLedgerService, model extraction of MemoryMiningService",
+        "version": "all seven spec services: MemoryStoreService, MemoryRetrievalService, TrustLedgerService, model extraction of MemoryMiningService, ConflictDetectionService, SleepCycleService, DreamingService",
         "feature": "League memory (app/agents/memory.py), turned on by user_id in POST /run. Scoring and team count are stored, and so are rostered and dropped players. Retrieved records set the scoring of the factor queries, stop rule-based pickups of rostered players and feed critic check (f).",
         "where_in_pipeline": "app/pipeline.py: memory.remember (store, then retrieve) runs before the Planner",
-        "conformance": "10/13 checks of the official runner pass; the 3 failures are the omitted sleep, conflict and dreaming services",
+        "conformance": "All 13 conformance vector checks pass in our runs through the bridge; the official runner scored 10/13 before the sleep, conflict and dreaming services were added (rerun pending)",
         "conformance_doc": "docs/hmem-conformance.md",
         "tests": [
           "tests/test_hmem.py",
+          "tests/test_hmem_services.py",
           "tests/test_memory.py",
           "tests/test_memory_sessions.py"
         ]
@@ -138,7 +139,7 @@
     "live_examples": "scripts/try_pipeline.py --live [--user ID] \"question\"",
     "critic_demo": "scripts/demo_critic.py",
     "docker": "Dockerfile (exposes 8000 and 8080)",
-    "tests": "pytest (301 tests)",
+    "tests": "pytest (318 tests)",
     "ci": ".github/workflows/ci.yml"
   },
   "traces": {

@@ -6,13 +6,32 @@ Our H-MEM engine (`app/engines/hmem.py`) implements the Meterless H-MEM spec:
 The spec is a reference architecture, not a package. It defines "done" as a green run
 of its conformance suite, `engines/hmem/conformance/runner.ts`.
 
-This is the minimum version. It has `MemoryStoreService`, `MemoryRetrievalService`,
-`TrustLedgerService` and the model-extraction step of `MemoryMiningService`. It does
-not have `DreamingService`, `SleepCycleService` or `ConflictDetectionService`.
+It has all seven services in spec section 11: `MemoryStoreService`,
+`MemoryRetrievalService`, `TrustLedgerService`, the model-extraction step of
+`MemoryMiningService`, `ConflictDetectionService`, `SleepCycleService` and
+`DreamingService`.
 
-## Result: 10 of 13 checks pass
+## Result
 
-Run on 2026-10-25, Windows 11 Enterprise, Node v24.12.0, tsx v4.23.15, Python 3.10.11.
+<!-- TODO before submitting: rerun the official runner (command under "How the runner
+reaches Python code"), paste its output here verbatim, and replace this section's
+first paragraph with the date, versions, commit and score. -->
+
+**All 13 vector checks now pass in our own runs. The official runner hasn't been rerun
+since the last three services were added.**
+
+- `tests/test_hmem_services.py` runs the three checks that failed before (sg-001,
+  cg-001, db-001) from the official vectors file, copied unchanged to
+  `tests/data/hmem_conformance_vectors.json`. Each runs in process and through
+  `bridge.py`, one process per call, as the shim calls it.
+- A harness that makes the same calls as `runner.ts`, run through `index.ts` with
+  Node's built-in TypeScript support, passed 13 of 13.
+
+The earlier official run, before conflicts, sleep and dreaming were built:
+
+### 2026-10-25, before the last three services: 10 of 13
+
+Run on Windows 11 Enterprise, Node v24.12.0, tsx v4.23.15, Python 3.10.11.
 Our code at commit `32449da` plus the shim below. The runner was not modified (the
 clone had no local changes). The output, verbatim:
 
@@ -52,17 +71,18 @@ H-MEM conformance: implementation = C:/Users/duaar/nfl-agent/scripts/hmem_confor
   10/13 checks passed
 ```
 
-The runner exits with code 1 because 3 checks fail. Each failing check tests a
-service this version leaves out:
+Each of the three failing checks tested a service that wasn't built yet. All three now are:
 
-| Check | Service it needs | Status |
+| Check | Service it needs | Now |
 |---|---|---|
-| sg-001 | `SleepCycleService` (preview, execute, backup) | not built |
-| cg-001 | `ConflictDetectionService` (scan, auto-resolve) | not built |
-| db-001 | `DreamingService` (proposals, approval) | not built |
+| sg-001 | `SleepCycleService` (preview, execute, backup) | built; backups saved to `backups/` |
+| cg-001 | `ConflictDetectionService` (scan, auto-resolve) | built |
+| db-001 | `DreamingService` (proposals, approval) | built; proposals saved to `dreams.json` |
 
-The shim exposes `sleep`, `conflicts` and `dreaming` as objects whose methods throw.
-These failures are real, not stubbed passes.
+The shim used to expose `sleep`, `conflicts` and `dreaming` as objects whose methods
+threw. They now call `bridge.py` like the other methods. Because each call is a new
+process, sleep backups and dream proposals are saved in the instance's temp folder
+between calls.
 
 ## How the runner reaches Python code
 
@@ -135,10 +155,16 @@ user across sessions (`app/agents/memory.py`).
   question has league or roster cues the regexes could not parse. The model's JSON array
   of statements goes back through the same parser and player lookup, so it can't add a
   fact that code can't check.
-- **Who sets `supersededBy`.** In the spec, conflict resolution sets it. We have no
-  conflict service, so the caller sets it when a newer fact replaces an older one with
-  the same key (scoring, team count, or a player's roster state). The old record is
-  kept and penalized, never deleted.
+- **Who sets `supersededBy`.** In the spec, conflict resolution sets it, and our
+  `ConflictDetectionService` does too. League memory doesn't wait for a scan: when a
+  newer fact replaces an older one with the same key (scoring, team count, or a
+  player's roster state), it supersedes the old record straight away. Either way the
+  old record is kept and penalized, never deleted.
+- **Sleep and dreaming are not scheduled.** The services work and are tested, but
+  league memory doesn't run them on a timer yet; a user's store is small enough not to
+  need consolidation during the event.
+- **IDs for conflicts, dream proposals and backups** are `<kind>-<random>`, like our
+  memory IDs, not counters.
 - **Record details.** IDs are `mem-<random>`, not a counter. `entities` are lowercase
   strings, as in the reference, not the `{name, type}` objects in
   `docs/memory-record.md`. `provenance.origin` uses the reference's event names

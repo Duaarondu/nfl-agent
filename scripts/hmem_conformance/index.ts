@@ -6,8 +6,6 @@
 //   HMEM_IMPL=<abs path to this file> npx tsx runner.ts
 //
 // HMEM_PYTHON overrides the interpreter (default: the repo's .venv).
-//
-// Not in our minimum version, so they throw: sleep, dreaming, conflicts.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -22,13 +20,6 @@ const python =
   path.join(repo, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 const bridge = path.join(here, "bridge.py");
 
-const notInMinimumVersion = (service: string) =>
-  new Proxy({}, {
-    get: (_t, method) => () => {
-      throw new Error(`${service}.${String(method)}: not implemented in the minimum H-MEM version`);
-    },
-  });
-
 export class HMEM {
   private dir = fs.mkdtempSync(path.join(os.tmpdir(), "hmem-conformance-"));
   private clock: () => number;
@@ -37,9 +28,20 @@ export class HMEM {
 
   readonly store = { get: (id: string) => this.call("get", { id }), all: () => this.call("all") };
   readonly ledger = { history: (id: string) => this.call("history", { id }) };
-  readonly sleep = notInMinimumVersion("sleep");
-  readonly dreaming = notInMinimumVersion("dreaming");
-  readonly conflicts = notInMinimumVersion("conflicts");
+  readonly sleep = {
+    preview: () => this.call("sleep_preview"),
+    execute: (preview?: unknown) => this.call("sleep_execute", { preview }),
+    restore: (backupId: string) => this.call("sleep_restore", { backupId }),
+  };
+  readonly conflicts = {
+    scan: () => this.call("conflicts_scan"),
+    autoResolve: (conflict: unknown) => this.call("conflicts_auto_resolve", { conflict }),
+  };
+  readonly dreaming = {
+    dream: () => this.call("dream"),
+    approve: (id: string) => this.call("dream_approve", { id }),
+    reject: (id: string) => this.call("dream_reject", { id }),
+  };
 
   constructor(opts: { clock?: () => number } = {}) {
     this.clock = opts.clock ?? Date.now;

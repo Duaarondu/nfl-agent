@@ -1,4 +1,4 @@
-"""H-MEM: human-style memory for agents, minimum version (store, retrieval, ledger, mining).
+"""H-MEM: human-style memory for agents (store, retrieval, ledger, mining, conflicts, sleep, dreaming).
 
 Implements the Meterless H-MEM spec: github.com/Meterless/Meterless, engines/hmem
 (AGENTS.md, docs/, conformance/; Apache-2.0; read at commit 1742dec). The spec is a
@@ -8,14 +8,17 @@ append-only trust ledger. The deterministic embedder is a port of the reference'
 FNV-1a mock (reference/src/embeddings.ts).
 
 Services (spec section 11): MemoryStoreService, MemoryRetrievalService,
-MemoryMiningService (model extraction only; callers do their own code-first mining)
-and TrustLedgerService. Not in this version: DreamingService, SleepCycleService and
-ConflictDetectionService. Supersession is set by the caller when a newer fact
-replaces an older one (supersedes / supersededBy), never by deleting the old record.
+MemoryMiningService (model extraction only; callers do their own code-first mining),
+TrustLedgerService, ConflictDetectionService (scan, gated auto-resolve),
+SleepCycleService (preview, execute with backup, restore) and DreamingService
+(proposals behind an approval boundary). League memory sets supersession itself when a
+newer fact replaces an older one (supersedes / supersededBy); conflict resolution sets
+it the same way. Neither deletes the old record; only the sleep cycle deletes.
 
-Storage: with persist_dir, records live in <persist_dir>/state.json; with ledger_path,
-every mutation is appended to that JSONL file. Without them everything stays in memory.
-Times are epoch milliseconds from an injectable clock.
+Storage: with persist_dir, records live in <persist_dir>/state.json, dream proposals in
+dreams.json and sleep backups in backups/; with ledger_path, every mutation is appended
+to that JSONL file. Without them everything stays in memory. Times are epoch
+milliseconds from an injectable clock.
 """
 
 from __future__ import annotations
@@ -45,7 +48,17 @@ DEFAULTS = {
     "entity_cap": 10,
     "related_cap": 5,
     "recency_days": 14,
+    # spec section 13, operational defaults
+    "consolidation_days": 7,
+    "archive_min_days": 30,
+    "archive_max_access": 2,
+    "synthesis_cosine": 0.82,
+    "dream_cluster_min_size": 2,
+    "dream_relatedness": 0.35,
+    "max_dream_proposals_per_type": 8,
+    "conflict_auto_resolve_gate": 0.70,
 }
+HUB_THRESHOLD = 3  # relatedTo links that make a record a relationship hub, never archived
 DAY_MS = 24 * 60 * 60 * 1000
 EMBED_DIM = 64
 
@@ -279,6 +292,29 @@ class MemoryStoreService:
         record.lastAccessed = self.clock()
         record.accessCount += 1
 
+    def promote(self, memory_id: str, layer: str) -> None:
+        if layer not in LAYERS:
+            raise ValueError(f"H-MEM: bad layer {layer!r}")
+        record = self._must_get(memory_id)
+        previous = record.snapshot()
+        record.layer = layer
+        self.ledger.log(memory_id, "promote", self.actor, previous_state=previous, new_state=record.snapshot())
+        self.persist()
+
+    def delete(self, memory_id: str, reason: str) -> None:
+        """Only the sleep cycle deletes (archive, synthesis); the ledger keeps the last state."""
+        record = self._must_get(memory_id)
+        del self.records[memory_id]
+        self.ledger.log(memory_id, "delete", self.actor, previous_state=record.snapshot(), details={"reason": reason})
+        self.persist()
+
+    def snapshot_all(self) -> list[dict[str, Any]]:
+        return [dataclasses.asdict(r) for r in self.records.values()]
+
+    def restore_all(self, records: list[dict[str, Any]]) -> None:
+        self.records = {r["id"]: MemoryRecord(**r) for r in records}
+        self.persist()
+
     def _must_get(self, memory_id: str) -> MemoryRecord:
         record = self.records.get(memory_id)
         if record is None:
@@ -467,6 +503,339 @@ class MemoryMiningService:
         return parse_strict_json_array(self.miner_fn(prompt))
 
 
+# --- conflicts (spec section 10): losers are marked supersededBy, never deleted ---
+
+OPPOSING_PAIRS = [
+    (re.compile(r"\balways\b", re.I), re.compile(r"\bnever\b", re.I)),
+    (re.compile(r"\benable[ds]?\b", re.I), re.compile(r"\bdisable[ds]?\b", re.I)),
+    (re.compile(r"\bprefer[s]?\b", re.I), re.compile(r"\bavoid[s]?\b|\bdislike[s]?\b", re.I)),
+    (re.compile(r"\bon\b", re.I), re.compile(r"\boff\b", re.I)),
+    (re.compile(r"\byes\b", re.I), re.compile(r"\bno\b", re.I)),
+]
+NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+@dataclass
+class ConflictRecord:
+    id: str
+    memoryA: str
+    memoryB: str
+    reason: str
+    confidence: float
+    resolved: bool = False
+    resolution: str | None = None  # keep_a | keep_b
+
+
+class ConflictDetectionService:
+    """Scan pairs for contradictions; auto-resolve only at decision confidence >= 0.70."""
+
+    def __init__(self, store: MemoryStoreService, ledger: TrustLedgerService, clock: Clock, actor: str) -> None:
+        self.store, self.ledger, self.clock, self.actor = store, ledger, clock, actor
+        self.found: list[ConflictRecord] = []
+
+    def scan(self) -> list[ConflictRecord]:
+        records = self.store.all()
+        found = []
+        for i, a in enumerate(records):
+            for b in records[i + 1:]:
+                conflict = self._check(a, b)
+                if conflict:
+                    found.append(conflict)
+                    self.ledger.log(a.id, "conflict_detected", self.actor, details={
+                        "with": b.id, "reason": conflict.reason, "confidence": conflict.confidence})
+        self.found.extend(found)
+        return found
+
+    def _check(self, a: MemoryRecord, b: MemoryRecord) -> ConflictRecord | None:
+        if b.id in (a.supersedes, a.supersededBy) or a.id in (b.supersedes, b.supersededBy):
+            return None  # an intended replacement, not a conflict
+        sim = cosine(a.embedding, b.embedding)
+        reason, confidence = "", 0.0
+        for p, q in OPPOSING_PAIRS:
+            if sim > 0.5 and ((p.search(a.content) and q.search(b.content)) or (q.search(a.content) and p.search(b.content))):
+                reason, confidence = "opposing phrase pair on similar content", 0.5 + 0.3 * sim
+        if not reason and sim > 0.8:
+            nums_a, nums_b = NUMBER.findall(a.content), NUMBER.findall(b.content)
+            if nums_a and nums_b and nums_a != nums_b:
+                reason, confidence = "high-similarity conflicting numeric values", 0.55 + 0.25 * sim
+        if not reason:
+            return None
+        if set(a.entities) & set(b.entities):
+            confidence += 0.1
+        if a.domain == b.domain:
+            confidence += 0.05
+        if b.id in a.relatedTo:
+            confidence -= 0.1  # an explicit relation lowers false positives
+        return ConflictRecord(f"conflict-{uuid.uuid4().hex[:12]}", a.id, b.id, reason, round(clamp01(confidence), 10))
+
+    def auto_resolve(self, conflict: ConflictRecord | dict[str, Any]) -> str:
+        """"resolved" (the loser gets supersededBy) or "queued" for a person to decide."""
+        if isinstance(conflict, dict):
+            conflict = ConflictRecord(**conflict)
+        a, b = self.store.get(conflict.memoryA), self.store.get(conflict.memoryB)
+        if a is None or b is None:
+            return "queued"
+        now = max(1, self.clock())
+
+        def weight(m: MemoryRecord) -> float:
+            return (0.3 * (m.lastAccessed / now) + 0.2 * min(1.0, m.accessCount / 10) + 0.25 * m.confidence
+                    + 0.1 * min(1.0, len(m.content) / 200)
+                    + 0.15 * (1.0 if m.provenance.get("origin") == "user_correction" else 0.5))
+
+        wa, wb = weight(a), weight(b)
+        margin = abs(wa - wb) / max(wa, wb)
+        decision = clamp01(conflict.confidence * 0.6 + margin * 0.8)
+        if decision < DEFAULTS["conflict_auto_resolve_gate"]:
+            return "queued"
+        winner, loser = (a, b) if wa >= wb else (b, a)
+        previous = loser.snapshot()
+        loser.supersededBy = winner.id
+        conflict.resolved, conflict.resolution = True, "keep_a" if winner.id == conflict.memoryA else "keep_b"
+        self.ledger.log(loser.id, "conflict_resolved", self.actor, previous_state=previous,
+                        new_state=loser.snapshot(), details={"conflictId": conflict.id, "winner": winner.id,
+                                                             "decisionConfidence": round(decision, 3)})
+        self.store.persist()
+        return "resolved"
+
+    def queue(self) -> list[ConflictRecord]:
+        return [c for c in self.found if not c.resolved]
+
+
+# --- sleep cycle (spec section 8): preview first, backup before execute ---
+
+
+@dataclass
+class SleepPreview:
+    toConsolidate: list[str]
+    toArchive: list[str]
+    toSynthesize: list[list[str]]
+
+
+@dataclass
+class SleepReport:
+    backupId: str
+    consolidated: int
+    archived: int
+    synthesized: int
+    actionLog: list[str]
+
+
+class SleepCycleService:
+    """Consolidate stale short-term memories, archive low-value old ones, merge near-duplicates.
+
+    Guardrails (spec 8.2): superseding records, derived/synthesized records and relationship
+    hubs are never archived. Backups live in <persist_dir>/backups/ when the store persists.
+    """
+
+    def __init__(self, store: MemoryStoreService, ledger: TrustLedgerService, clock: Clock, actor: str,
+                 backup_dir: Path | None = None) -> None:
+        self.store, self.ledger, self.clock, self.actor = store, ledger, clock, actor
+        self.backup_dir = backup_dir
+        self._backups: dict[str, list[dict[str, Any]]] = {}
+
+    def preview(self) -> SleepPreview:
+        """The full plan; changes nothing."""
+        now, records = self.clock(), self.store.all()
+        referenced: set[str] = set()
+        for m in records:
+            referenced.update(m.relatedTo)
+            referenced.update(m.derivedFrom)
+            if m.supersedes:
+                referenced.add(m.supersedes)
+        consolidate = [m.id for m in records if m.layer == "short_term"
+                       and now - m.lastAccessed >= DEFAULTS["consolidation_days"] * DAY_MS]
+
+        def archivable(m: MemoryRecord) -> bool:
+            if now - m.timestamp < DEFAULTS["archive_min_days"] * DAY_MS:
+                return False
+            if m.accessCount > DEFAULTS["archive_max_access"] or m.id in referenced:
+                return False
+            return not (m.supersedes or m.derivedFrom or len(m.relatedTo) >= HUB_THRESHOLD)
+
+        synthesize, used = [], set()
+        for i, seed in enumerate(records):
+            if seed.id in used:
+                continue
+            group = [seed] + [o for o in records[i + 1:] if o.id not in used
+                              and cosine(seed.embedding, o.embedding) >= DEFAULTS["synthesis_cosine"]]
+            if len(group) >= 2:
+                used.update(g.id for g in group)
+                synthesize.append([g.id for g in group])
+        return SleepPreview(consolidate, [m.id for m in records if archivable(m)], synthesize)
+
+    def execute(self, preview: SleepPreview | dict[str, Any] | None = None) -> SleepReport:
+        if isinstance(preview, dict):
+            preview = SleepPreview(**preview)
+        plan = preview or self.preview()
+        backup_id = f"backup-{uuid.uuid4().hex[:12]}"
+        self._save_backup(backup_id, self.store.snapshot_all())
+        log = [f"backup {backup_id} created"]
+        for memory_id in plan.toConsolidate:
+            if self.store.get(memory_id):
+                self.store.promote(memory_id, "long_term")
+                self.ledger.log(memory_id, "sleep_consolidate", self.actor, details={"from": "short_term", "to": "long_term"})
+                log.append(f"consolidated {memory_id}")
+        for memory_id in plan.toArchive:
+            m = self.store.get(memory_id)
+            if m:
+                self.ledger.log(memory_id, "sleep_archive", self.actor,
+                                details={"ageMs": self.clock() - m.timestamp, "accessCount": m.accessCount})
+                self.store.delete(memory_id, "sleep archive")
+                log.append(f"archived {memory_id}")
+        synthesized = 0
+        for group in plan.toSynthesize:
+            members = [m for m in (self.store.get(i) for i in group) if m]
+            if len(members) < 2:
+                continue
+            merged = self.store.add(
+                "Synthesis: " + " | ".join(m.content for m in members), "sleep:synthesis",
+                type="factual", layer="long_term", tags=list(dict.fromkeys(t for m in members for t in m.tags)),
+                confidence=max(m.confidence for m in members), chat_id=members[0].chatId,
+                provenance={"origin": "sleep_synthesis", "learnedAt": self.clock(),
+                            "label": f"synthesized from {len(members)} memories"},
+                derived_from=[m.id for m in members],
+            )
+            self.ledger.log(merged.id, "sleep_synthesize", self.actor, details={"sources": group})
+            for m in members:
+                self.store.delete(m.id, "merged by sleep synthesis")
+            synthesized += 1
+            log.append(f"synthesized {merged.id} from {', '.join(group)}")
+        return SleepReport(backup_id, len(plan.toConsolidate), len(plan.toArchive), synthesized, log)
+
+    def restore(self, backup_id: str) -> None:
+        records = self._load_backup(backup_id)
+        self.store.restore_all(records)
+        self.ledger.log("*", "restore", self.actor, details={"backupId": backup_id})
+
+    def _save_backup(self, backup_id: str, records: list[dict[str, Any]]) -> None:
+        self._backups[backup_id] = records
+        if self.backup_dir:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            (self.backup_dir / f"{backup_id}.json").write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+
+    def _load_backup(self, backup_id: str) -> list[dict[str, Any]]:
+        if not re.fullmatch(r"backup-[0-9a-f]{12}", backup_id):
+            raise KeyError(f"H-MEM: unknown backup {backup_id}")
+        if backup_id in self._backups:
+            return self._backups[backup_id]
+        path = self.backup_dir / f"{backup_id}.json" if self.backup_dir else None
+        if path is None or not path.is_file():
+            raise KeyError(f"H-MEM: unknown backup {backup_id}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+
+# --- dreaming (spec section 7): proposals never take effect before approval ---
+
+
+@dataclass
+class DreamProposal:
+    id: str
+    type: str  # insight | domain | invariant
+    content: str
+    derivedFrom: list[str]
+    suggestedDomain: str | None = None
+    status: str = "proposed"  # proposed | approved | rejected
+
+
+class DreamingService:
+    """Clusters related memories into proposals; only approve() turns one into memory.
+
+    Proposals live in <persist_dir>/dreams.json when the store persists.
+    """
+
+    def __init__(self, store: MemoryStoreService, ledger: TrustLedgerService, clock: Clock, actor: str,
+                 path: Path | None = None) -> None:
+        self.store, self.ledger, self.clock, self.actor, self.path = store, ledger, clock, actor, path
+        self.proposals: dict[str, DreamProposal] = {}
+        if path and path.is_file():
+            for p in json.loads(path.read_text(encoding="utf-8")):
+                self.proposals[p["id"]] = DreamProposal(**p)
+
+    def _persist(self) -> None:
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps([dataclasses.asdict(p) for p in self.proposals.values()],
+                                            ensure_ascii=False, indent=1), encoding="utf-8")
+
+    @staticmethod
+    def _relatedness(a: MemoryRecord, b: MemoryRecord) -> float:
+        return (0.5 * max(0.0, cosine(a.embedding, b.embedding)) + 0.2 * jaccard(a.tags, b.tags)
+                + 0.1 * (1.0 if a.domain == b.domain else 0.0) + 0.2 * jaccard(a.entities, b.entities))
+
+    def _propose(self, type: str, content: str, derived_from: list[str], suggested: str | None = None) -> DreamProposal:
+        proposal = DreamProposal(f"dream-{uuid.uuid4().hex[:12]}", type, content, derived_from, suggested)
+        self.proposals[proposal.id] = proposal
+        self.ledger.log(proposal.id, "dream_proposed", self.actor, details={"type": type, "derivedFrom": derived_from})
+        return proposal
+
+    def dream(self) -> list[DreamProposal]:
+        cap, records, created = DEFAULTS["max_dream_proposals_per_type"], self.store.all(), []
+        used: set[str] = set()
+        for seed in records:  # insights from clusters
+            if len([p for p in created if p.type == "insight"]) >= cap:
+                break
+            if seed.id in used:
+                continue
+            group = [seed] + [o for o in records if o.id != seed.id and o.id not in used
+                              and self._relatedness(seed, o) >= DEFAULTS["dream_relatedness"]]
+            if len(group) >= DEFAULTS["dream_cluster_min_size"]:
+                used.update(g.id for g in group)
+                domains = "/".join(dict.fromkeys(m.domain for m in group))
+                created.append(self._propose("insight", f"Across {len(group)} related memories ({domains}): "
+                                             + " + ".join(m.content for m in group), [m.id for m in group]))
+        for m in records:  # domain suggestions for uncategorized memories
+            if len([p for p in created if p.type == "domain"]) >= cap:
+                break
+            suggested = self.store.classify_domain(m.content, m.tags, m.type) if m.domain == "general" else "general"
+            if suggested != "general":
+                created.append(self._propose("domain", f'Reclassify "{m.content[:60]}" as {suggested}', [m.id], suggested))
+        by_domain: dict[str, list[MemoryRecord]] = {}
+        for m in records:  # invariants from preference, personal and correction signals
+            if m.type in ("preference", "personal") or m.provenance.get("origin") == "user_correction":
+                by_domain.setdefault(m.domain, []).append(m)
+        for domain, items in by_domain.items():
+            if len([p for p in created if p.type == "invariant"]) >= cap:
+                break
+            if len(items) >= 2:
+                created.append(self._propose("invariant", f"Stable pattern in {domain}: "
+                                             + "; ".join(m.content for m in items), [m.id for m in items]))
+        self._persist()
+        return created
+
+    def pending(self) -> list[DreamProposal]:
+        return [p for p in self.proposals.values() if p.status == "proposed"]
+
+    def _pending(self, proposal_id: str) -> DreamProposal:
+        p = self.proposals.get(proposal_id)
+        if p is None or p.status != "proposed":
+            raise KeyError(f"H-MEM: no pending proposal {proposal_id}")
+        return p
+
+    def approve(self, proposal_id: str) -> MemoryRecord | None:
+        """insight -> long-term factual, invariant -> long-term preference, both with derivedFrom;
+        domain -> updates the source records' domain and returns None."""
+        p = self._pending(proposal_id)
+        p.status = "approved"
+        self.ledger.log(proposal_id, "dream_approved", self.actor, details={"type": p.type})
+        self._persist()
+        if p.type == "domain":
+            for memory_id in p.derivedFrom:
+                if self.store.get(memory_id) and p.suggestedDomain:
+                    self.store.update(memory_id, details={"dream": proposal_id}, domain=p.suggestedDomain)
+            return None
+        return self.store.add(
+            p.content, "dreaming", type="factual" if p.type == "insight" else "preference", layer="long_term",
+            tags=[f"dream:{p.type}"], confidence=0.75, derived_from=p.derivedFrom,
+            provenance={"origin": "dream", "learnedAt": self.clock(), "label": f"approved {p.type} proposal"},
+        )
+
+    def reject(self, proposal_id: str) -> None:
+        p = self._pending(proposal_id)
+        p.status = "rejected"  # logged, never materialized
+        self.ledger.log(proposal_id, "dream_rejected", self.actor, details={"type": p.type})
+        self._persist()
+
+
 # --- facade (HOW_TO_USE_H-MEM.md) ---
 
 
@@ -480,6 +849,11 @@ class HMEM:
         self.store = MemoryStoreService(self.clock, self.ledger, actor, persist_dir)
         self.retrieval = MemoryRetrievalService(self.store, self.ledger, self.clock, actor)
         self.mining = MemoryMiningService(miner_fn)
+        self.conflicts = ConflictDetectionService(self.store, self.ledger, self.clock, actor)
+        self.sleep = SleepCycleService(self.store, self.ledger, self.clock, actor,
+                                       persist_dir / "backups" if persist_dir else None)
+        self.dreaming = DreamingService(self.store, self.ledger, self.clock, actor,
+                                        persist_dir / "dreams.json" if persist_dir else None)
 
     def add(self, content: str, source: str, **kwargs: Any) -> MemoryRecord:
         return self.store.add(content, source, **kwargs)

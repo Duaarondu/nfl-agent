@@ -1,8 +1,9 @@
 """One H-MEM operation per process, for the conformance shim (index.ts next to this file).
 
 Reads {"dir", "clock", "op", "args", "overrides"} as JSON on stdin, runs the op on
-app.engines.hmem.HMEM persisted in dir (state.json + ledger.jsonl), and writes
-{"ok": result} or {"error": message} as JSON on stdout.
+app.engines.hmem.HMEM persisted in dir (state.json + ledger.jsonl, plus dreams.json and
+backups/ for the dreaming and sleep services), and writes {"ok": result} or
+{"error": message} as JSON on stdout.
 
 overrides is the ro-001 shortcut: the runner sets supersededBy directly on record
 objects it got back, which a cross-process shim cannot see, so the shim sends those
@@ -54,6 +55,24 @@ def run(req: dict):
         return [record(r) for r in mem.store.all()]
     if op == "history":
         return mem.ledger.history(args["id"])
+    if op == "sleep_preview":
+        return dataclasses.asdict(mem.sleep.preview())
+    if op == "sleep_execute":
+        return dataclasses.asdict(mem.sleep.execute(args.get("preview")))
+    if op == "sleep_restore":
+        mem.sleep.restore(args["backupId"])
+        return None
+    if op == "conflicts_scan":
+        return [dataclasses.asdict(c) for c in mem.conflicts.scan()]
+    if op == "conflicts_auto_resolve":
+        return mem.conflicts.auto_resolve(args["conflict"])
+    if op == "dream":
+        return [dataclasses.asdict(p) for p in mem.dreaming.dream()]
+    if op == "dream_approve":
+        return record(mem.dreaming.approve(args["id"]))
+    if op == "dream_reject":
+        mem.dreaming.reject(args["id"])
+        return None
     raise ValueError(f"unknown op {op}")
 
 

@@ -247,7 +247,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 301 tests
+pytest           # 318 tests
 ```
 
 The tests cover:
@@ -256,6 +256,8 @@ The tests cover:
 - the factor agents, including their timeouts and rule fallbacks
 - each critic check, on saved answers
 - the revision loop and league memory (including two processes)
+- the H-MEM engine, including its conflict, sleep and dreaming services against the
+  official conformance vectors
 - the API, CORS and `/trace` while a run is in progress
 - the UI files
 
@@ -311,9 +313,12 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
   - **Nightshift runtime:** the only model provider, reached through its
     OpenAI-compatible API in `app/adapters/meterless.py`.
   - **H-MEM engine:** implemented in Python from the official spec
-    (`app/engines/hmem.py`). It powers the league memory feature. The official
-    conformance runner passes **10 of 13** checks; the 3 failures are the services this
-    minimum version leaves out ([docs/hmem-conformance.md](docs/hmem-conformance.md)).
+    (`app/engines/hmem.py`), with all seven services in the spec, including the
+    sleep cycle, conflict detection and dreaming. It powers the league memory feature.
+    <!-- TODO before submitting: rerun the official runner and replace the next sentence with its score. -->
+    All 13 conformance vector checks pass in our runs through the bridge; the official
+    runner scored **10 of 13** before the last three services were added
+    ([docs/hmem-conformance.md](docs/hmem-conformance.md)).
 - **NVIDIA:** every agent's model is Nemotron 3.5 Lightning
   (`nvidia/nemotron-3.5-lightning-30b-a3b`), served through Nightshift. The routed
   model the runtime reports is recorded in each `model_call` trace line and in the

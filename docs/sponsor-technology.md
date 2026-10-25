@@ -99,9 +99,11 @@ is [github.com/Meterless/Meterless](https://github.com/Meterless/Meterless),
 `engines/hmem` (Apache-2.0), read at commit `1742dec`. It is a reference architecture
 to implement, not a package.
 
-**What we built.** This is the minimum version. It has `MemoryStoreService`,
-`MemoryRetrievalService`, `TrustLedgerService` and the model-extraction step of
-`MemoryMiningService`. It follows the spec's:
+**What we built.** All seven services in spec section 11: `MemoryStoreService`,
+`MemoryRetrievalService`, `TrustLedgerService`, the model-extraction step of
+`MemoryMiningService`, `ConflictDetectionService` (scan and gated auto-resolve),
+`SleepCycleService` (preview, execute with backup, restore) and `DreamingService`
+(proposals that take effect only on approval). It follows the spec's:
 - record shape
 - ranking formula
 - feedback deltas
@@ -121,9 +123,11 @@ to implement, not a package.
   retrieved IDs and their scores.
 
 **Conformance.** The official conformance runner is run unmodified through a thin
-TypeScript-to-Python bridge in `scripts/hmem_conformance/`. It passes **10 of 13**
-checks. The 3 failures are the services this version leaves out: sleep cycle,
-conflict detection and dreaming. Two departures from the spec are deliberate, and both
+TypeScript-to-Python bridge in `scripts/hmem_conformance/`.
+<!-- TODO before submitting: rerun the official runner and replace the next two sentences with its score. -->
+It passed **10 of 13** checks before the sleep cycle, conflict detection and dreaming
+were built; the 3 failures were those services. All 13 vector checks now pass in our
+own runs through the same bridge. Two departures from the spec are deliberate, and both
 are documented:
 - **Recall scope:** recall is per user, not per chat.
 - **Retrieval limits:** league facts use threshold 0 and top N 15, because they are
@@ -131,7 +135,9 @@ are documented:
 
 Full output and details: [hmem-conformance.md](hmem-conformance.md).
 
-**Tests.** The engine has unit tests in `tests/test_hmem.py`. The feature is tested
+**Tests.** The engine has unit tests in `tests/test_hmem.py`, and
+`tests/test_hmem_services.py` runs the conflict, sleep and dreaming vectors from the
+official vectors file, in process and through the bridge. The feature is tested
 end to end across two separate processes in `tests/test_memory_sessions.py`:
 1. Session 1 states the league.
 2. Session 2 asks only about Mike Evans.
@@ -187,5 +193,5 @@ The project was built in Claude Code, in this repository, from 22 October 2026:
   costs one factor's model rating, not the whole answer.
 - **Honest provenance.** Every answer says which steps a model produced and which the
   code rules produced, and every number links to the SQL and rows it came from.
-- **H-MEM to the official spec**, with the conformance result published, failures
-  included.
+- **H-MEM to the official spec**, all seven services, with the conformance results
+  published, including the earlier failures.
