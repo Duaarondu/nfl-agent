@@ -1,0 +1,63 @@
+# On every push: the test suite, then the fresh-machine, no-credentials check.
+# The Docker job builds the image and runs it with NO env file: sample data, and every
+# model step falls back to its code rules because no Meterless runtime is configured.
+name: ci
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t nfl-agent .
+
+      - name: Run it with no env file
+        run: docker run -d --name agent -p 8000:8000 nfl-agent
+
+      - name: GET /health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health -o health.json; then break; fi
+            sleep 2
+          done
+          cat health.json
+          jq -e '.status == "ok" and .sample_mode == true and .model_configured == false' health.json
+
+      - name: POST /run with the Watson question
+        run: |
+          curl -sS --max-time 300 -X POST http://localhost:8000/run \
+            -H "Content-Type: application/json" \
+            -d '{"question": "Why is Christian Watson scoring so many fantasy points this season?"}' \
+            -o run.json -w "HTTP %{http_code}\n"
+          jq '{run_id, answer, approved, steps, timings: .timings.total_ms}' run.json
+          jq -e '(.answer | type == "string" and length > 0)
+                 and (.answer | contains("not betting advice"))
+                 and .player.name == "Christian Watson"
+                 and (.factors | length) > 0
+                 and (.claims | length) > 0
+                 and .steps.final_verdict == "rule-based"' run.json
+
+      - name: Container logs
+        if: always()
+        run: docker logs agent 2>&1 | tail -100
