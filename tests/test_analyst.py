@@ -118,13 +118,17 @@ def test_factor_agents_are_named_in_traces(real_sample, model, trace_dir):
 
     lines = read_trace(trace_dir)
     agents = {l["agent_name"] for l in lines if l["action"] == "model_call"}
-    assert agents == {"analyst"} | {f"factor_agent:{f}" for f in WHY_FACTORS}
+    assert agents == {"planner", "analyst"} | {f"factor_agent:{f}" for f in WHY_FACTORS}
     rates = [l for l in lines if l["action"] == "rate_factor"]
     assert {l["agent_name"] for l in rates} == {f"factor_agent:{f}" for f in WHY_FACTORS}
     assert all(l["status"] == "ok" and l["rated_by"] == "model" for l in rates)
     calls = [l for l in lines if l["action"] == "model_call"]
     assert all(c["model"] == "stub-routed" and isinstance(c["duration_ms"], int) for c in calls)
-    assert [l["step"] for l in calls if l["agent_name"] == "analyst"] == ["classify", "verdict"]
+    assert [l["step"] for l in calls if l["agent_name"] == "planner"] == ["classify"]
+    assert [l["step"] for l in calls if l["agent_name"] == "analyst"] == ["verdict"]
+    [handoff] = [l for l in lines if l["action"] == "handoff"]
+    assert (handoff["agent_name"], handoff["target_agent"], handoff["classified_by"]) == ("planner", "analyst", "model")
+    assert (handoff["player_name"], handoff["question_type"]) == ("Christian Watson", "why")
 
 
 def test_failed_factor_agent_falls_back_to_rules(real_sample, model, trace_dir):

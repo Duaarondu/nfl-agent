@@ -118,6 +118,6 @@ def test_sql_turns_are_traced(sample_dir, model, trace_dir):
 
     steps = [(l["action"], l.get("step")) for l in read_trace(trace_dir)]
     assert steps == [
-        ("season_context", None), ("model_call", "classify"),
+        ("season_context", None), ("model_call", "classify"), ("handoff", None),
         ("model_call", "sql_loop"), ("query", None), ("model_call", "sql_loop"), ("answer", None),
     ]

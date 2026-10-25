@@ -1,6 +1,6 @@
 """One question end to end: the Analyst answers, the Critic checks, the verdict is revised.
 
-    [memory.remember ->] analyst.analyze -> critic.critique -> (needs_revision) analyst.revise_verdict -> critique ...
+    [memory.remember ->] planner.plan -> analyst.analyze -> critic.critique -> (needs_revision) analyst.revise_verdict -> critique ...
 
 With a user_id, league memory (app.agents.memory, on the H-MEM engine) first stores
 what the question says about the user's league and roster, then retrieves what is
@@ -18,7 +18,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from app.agents import analyst, critic, memory
+from app.agents import analyst, critic, memory, planner
 from app.agents.analyst import AnalystResult
 from app.agents.critic import Critique
 from app.trace import new_run_id, trace
@@ -50,7 +50,8 @@ def answer(
     run_id = run_id or new_run_id()
     started = time.perf_counter()
     context = memory.remember(user_id, question, run_id, session_id) if user_id else None
-    result = analyst.analyze(question, run_id=run_id, memory=context)
+    route = planner.plan(run_id, question)
+    result = analyst.analyze(question, run_id=run_id, memory=context, route=route)
     return review(result, started, model_review)
 
 

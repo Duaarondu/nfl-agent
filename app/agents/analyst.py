@@ -1,10 +1,10 @@
 """Analyst agent: answers a fantasy question with claims backed by SQL and rows.
 
-Two small model calls (via app.adapters.meterless), neither of which sees the schema:
-  1. classify: the question -> {player_name, question_type}
-  2. interpret: the factor query results -> verdict, ranked factors, claims
-Between them, code looks the player up, checks the question's premise and runs
-the factor queries (app.agents.factor_queries) through app.adapters.zetaris.
+Takes the Planner's route (app.agents.planner: {player_name, question_type}), then code
+looks the player up, checks the question's premise and runs the factor queries
+(app.agents.factor_queries) through app.adapters.zetaris. Model calls (via
+app.adapters.meterless) rate each factor in parallel and write the verdict; none sees
+the schema.
 
 Optional (off by default, ANALYST_FREE_SQL=true): instead of call 2, the model
 may write its own SQL with the schema in its prompt, one JSON action per turn.
@@ -29,7 +29,7 @@ from typing import Any
 
 from app.adapters import meterless
 from app.adapters.zetaris import ZetarisError, run_sql
-from app.agents import factor_queries
+from app.agents import factor_queries, planner
 from app.agents.memory import UserContext, user_context_from_dict
 from app.trace import new_run_id, trace
 
@@ -42,13 +42,12 @@ ROWS_SHOWN_TO_MODEL = 50
 # not forward it yet (checked 2026-10-22); sent anyway so it works once it does.
 MODEL_PARAMS = {"temperature": 0.2, "chat_template_kwargs": {"enable_thinking": False}}
 # The model still thinks before replying; these leave room for that plus the JSON.
-CLASSIFY_MAX_TOKENS = 1024
 FACTOR_MAX_TOKENS = 4096
 VERDICT_MAX_TOKENS = 4096
 # Time limits (seconds). Each model request times out on its own; the factor agents
 # share one window, and whatever is left of the total goes to the verdict call.
 CALL_TIMEOUT = 60
-CLASSIFY_TIMEOUT = 30
+CLASSIFY_TIMEOUT = planner.TIMEOUT
 TOTAL_BUDGET = 150
 FACTOR_WINDOW = 85
 VERDICT_RESERVE = 45
@@ -63,13 +62,7 @@ NOT_MEASURABLE = (
     "Injury severity beyond the official report",
 )
 
-CLASSIFY_PROMPT = """\
-Read one fantasy football question. Reply with only this JSON:
-{"player_name": "<full name of the NFL player it is about, or null>",
- "question_type": "why" | "replacement" | "start_sit" | "waiver" | "other"}
-why: explain a player's production. replacement: who takes over if a player is out.
-start_sit: start or bench. waiver: pick up, add or drop.
-For a replacement question, player_name is the player who is out."""
+CLASSIFY_PROMPT = planner.PROMPT  # the Planner's classify prompt
 
 FACTOR_PROMPT = """\
 You rate one factor for a fantasy football question, from facts computed from nflverse
@@ -252,20 +245,23 @@ class Plan:
 
 
 def analyze(
-    question: str, run_id: str | None = None, free_sql: bool | None = None, memory: UserContext | None = None
+    question: str, run_id: str | None = None, free_sql: bool | None = None, memory: UserContext | None = None,
+    route: planner.Route | None = None,
 ) -> AnalystResult:
     """Answer one fantasy question. Raises AnalystError if no valid answer comes back.
 
     free_sql (default: ANALYST_FREE_SQL env, off) lets the model write its own SQL
     instead of interpreting only the factor queries. memory is the user's league
-    context (scoring and roster), if any.
+    context (scoring and roster), if any. route is the Planner's handoff; without one
+    the Planner runs here.
     """
     run_id = run_id or new_run_id()
     started = time.perf_counter()
     if free_sql is None:
         free_sql = os.environ.get("ANALYST_FREE_SQL", "").strip().lower() in ("1", "true", "yes")
     context, season, week = _season_context(run_id)
-    player_name, question_type = _classify(run_id, question)
+    route = route or planner.plan(run_id, question)
+    player_name, question_type = route.player_name, route.question_type
     scoring = factor_queries.SCORINGS[memory.scoring] if memory else factor_queries.PPR
     plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory)
 
@@ -548,29 +544,6 @@ def _assemble(
         verdict_by=verdict_by, premise_corrected=result.premise_correction is not None,
     )
     return result
-
-
-def _classify(run_id: str, question: str) -> tuple[str | None, str]:
-    """Model call 1. Falls back to keyword rules if the call fails."""
-    messages = [
-        {"role": "system", "content": CLASSIFY_PROMPT},
-        {"role": "user", "content": question},
-    ]
-    try:
-        reply = _ask_json(
-            run_id, "classify", messages, CLASSIFY_MAX_TOKENS, _check_classification, timeout=CLASSIFY_TIMEOUT
-        )
-    except AnalystError as error:
-        question_type = factor_queries.guess_question_type(question)
-        trace(run_id, AGENT_NAME, "classify", "fallback", error=str(error), question_type=question_type)
-        return None, question_type
-    name = reply.get("player_name")
-    return (name.strip() if isinstance(name, str) and name.strip() else None), reply["question_type"]
-
-
-def _check_classification(reply: dict[str, Any]) -> None:
-    if reply.get("question_type") not in factor_queries.QUESTION_TYPES:
-        raise ValueError(f"question_type must be one of {', '.join(factor_queries.QUESTION_TYPES)}")
 
 
 def _check_answer(reply: dict[str, Any]) -> None:
