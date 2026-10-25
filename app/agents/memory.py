@@ -352,8 +352,12 @@ def retrieve(user_id: str, question: str, run_id: str) -> UserContext:
     result = mem.query(question, top_n=RETRIEVE_TOP_N, threshold=RETRIEVE_THRESHOLD)
     ctx = UserContext(user_id, context=result.context, memory_ids=[r.memory.id for r in result.memories],
                       remembered=bool(result.memories))
-    live = [r.memory for r in result.memories if not r.memory.supersededBy]
-    for m in sorted(live, key=lambda m: m.timestamp):  # the newest fact wins if two are live
+    # In the order they were stored (ties in the same millisecond keep store order), so the
+    # newest fact wins if two are live and the roster keeps the order the user gave it.
+    stored = {r.id: i for i, r in enumerate(mem.store.all())}
+    live = sorted((r.memory for r in result.memories if not r.memory.supersededBy),
+                  key=lambda m: (m.timestamp, stored[m.id]))
+    for m in live:
         for tag in m.tags:
             name, _, value = tag.partition("=")
             if name == "fantasy:teams":
@@ -361,7 +365,7 @@ def retrieve(user_id: str, question: str, run_id: str) -> UserContext:
             elif name == "fantasy:scoring" and value in SCORINGS:
                 ctx.scoring = value
     on = {}
-    for m in sorted(live, key=lambda m: m.timestamp):
+    for m in live:
         player = next((t.split("=", 1)[1] for t in m.tags if t.startswith("fantasy:roster=")), None)
         if player:
             pid, name, team, pos = player.split("|")

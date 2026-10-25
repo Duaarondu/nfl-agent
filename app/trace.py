@@ -7,12 +7,26 @@ import sys
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from app.config import REPO_ROOT
 
 LOG_DIR = REPO_ROOT / "logs"
 _lock = threading.Lock()  # factor agents trace from parallel threads
+_subscribers: list[Callable[[dict[str, Any]], None]] = []
+
+
+def subscribe(fn: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
+    """Also send every trace line to fn (e.g. to collect one run's lines); returns an unsubscribe."""
+    with _lock:
+        _subscribers.append(fn)
+
+    def unsubscribe() -> None:
+        with _lock:
+            if fn in _subscribers:
+                _subscribers.remove(fn)
+
+    return unsubscribe
 
 
 def new_run_id() -> str:
@@ -54,4 +68,7 @@ def trace(
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         with open(LOG_DIR / f"trace-{now:%Y%m%d}.jsonl", "a", encoding="utf-8") as log:
             log.write(text + "\n")
+        subscribers = list(_subscribers)
+    for fn in subscribers:
+        fn(line)
     return line
