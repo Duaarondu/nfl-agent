@@ -640,7 +640,7 @@ def _verdict(
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
               step="revise" if revision else "verdict", reason=(rule_based or failed or "")[:300],
               **({"round": round} if revision else {}))
-    lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
+    lead = factor_queries.replacement_lead(player, results, verdict, question) if question_type == "replacement" else None
     answer = _with_name_note(_compose(question_type, verdict, why, note, lead), name_note)
     return round_numbers(_with_variant_note(answer, question)), by
 
@@ -766,7 +766,7 @@ def _hard_rules(
         elif question_type == "start_sit":
             rules.append(f"He {why}: Sit {name}.")
     if player and (question_type == "replacement" or (out and question_type in ("start_sit", "waiver"))):
-        rules += _backed_pick(player, results, tuple(roster))
+        rules += _backed_pick(player, results, tuple(roster), question)
     elif player and question_type != "compare":
         rules.append(f'The verdict names its player ("Hold {player.name}", "Start {player.name}"), never a bare '
                      '"Hold" or "Start".')
@@ -787,11 +787,12 @@ def _hard_rules(
 
 
 def _backed_pick(
-    player: factor_queries.Player, results: dict[str, tuple[list[str], list[list]]], roster: tuple[str, ...]
+    player: factor_queries.Player, results: dict[str, tuple[list[str], list[list]]], roster: tuple[str, ...],
+    question: str = "",
 ) -> list[str]:
     """The stand-in the code rules pick (factor_queries._next_up), as critic check (a) tests it:
     "The usage numbers back Christian McCaffrey (22.8%) among players not on the roster: recommend him."."""
-    name, reason = factor_queries._next_up(player, results, roster)
+    name, reason = factor_queries._next_up(player, results, roster, question)
     if not name:
         return []
     backs = f"The numbers back {name}: {factor_queries._first_sentence(reason)}"
@@ -1098,7 +1099,11 @@ def _run_plan(
     asked = [p for p in factor_queries.order_in_question(players, question)
              if question_type in ("start_sit", "waiver", "unsupported") and factor_queries.name_span(
                  p, factor_queries.sentences(question)[-1] if factor_queries.sentences(question) else question)]
-    plan.player = (named or asked or not_owned or players)[0]
+    # "I dropped Deebo Samuel. Who becomes the 49ers' WR1 if Mike Evans is out?" is about Evans:
+    # the player the question says is out, or the one after "replaces" (QA, 26 October 2026).
+    gone = [p for p in factor_queries.order_in_question(players, question) if question_type == "replacement" and (
+        factor_queries.says_out(question, p.name) or factor_queries.replaced_in(question, p))]
+    plan.player = (gone or named or asked or not_owned or players)[0]
     plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
     planned_type = "start_sit" if question_type in ("unsupported", "status") else question_type
     for planned in factor_queries.plan(planned_type, plan.player, season, week, scoring, week_named):

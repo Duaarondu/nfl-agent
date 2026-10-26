@@ -212,8 +212,8 @@ def test_no_model_says_so(no_model):
     ("Lamar Jackson is out. Who is the Ravens' QB?",
      "Tyler Huntley is next at QB on the depth chart, so for fantasy: pick up Tyler Huntley if available."),
     ("Who becomes the Bucs' WR1 if Mike Evans is out?",
-     "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
-     "so for fantasy: pick up Deebo Samuel if available."),
+     "Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week; Brandin Cooks has the most recent target share of those who can play (7.2%), "
+     "so for fantasy: pick up Brandin Cooks if available."),
     ("Who replaces Chris Godwin?",
      "Ted Hurst III is next at WR on the depth chart (14.6% recent target share), "
      "so for fantasy: pick up Ted Hurst III if available."),
@@ -252,7 +252,7 @@ def test_scoring_phrases(text, scoring):
 
 def test_one_half_ppr_question_quotes_half_ppr(no_model):
     _, answer = ask("1/2 ppr, should I start Bijan Robinson?")
-    assert "half-PPR per game; he averages 19.7" in answer
+    assert "half-PPR points per game; he averages 19.7" in answer
 
 
 def test_te_premium_says_standard_rules_apply(no_model):
@@ -368,13 +368,13 @@ def test_rb_vs_wr_matchup_compares_ranks(no_model):
 def test_rb_waiver_rule_counts_carries(no_model):
     _, answer = ask("Is Kaelon Black worth adding?")
     assert answer.startswith("Hold off on Kaelon Black.")
-    assert "Rule: pick up at 15%+ recent target share or, for an RB, 10+ carries per game; his are 1.7% and 7.5." in answer
+    assert "Rule: pick up at 15%+ recent target share or, for an RB, 10+ carries per game; he has 1.7% recent target share and 7.5 carries per game." in answer
 
 
 def test_rb_keep_rule_counts_carries(no_model):
     _, answer = ask("Should I drop Bucky Irving?")
     assert answer.startswith("Keep Bucky Irving.")
-    assert "10+ carries per game or 12+ PPR per game; his are 9.7%, 16 and 14.3." in answer
+    assert "10+ carries per game or 12+ PPR points per game; he has 9.7% recent target share, 16 carries per game and 14.3 PPR points per game." in answer
 
 
 def test_rb_opportunity_counts_touches(no_model):

@@ -197,7 +197,7 @@ def test_claims_are_code_facts_with_evidence(real_sample, model):
 
 def test_replacement_question_rates_usage_depth_and_games_without(real_sample, model):
     script(model, classify("Mike Evans", "replacement"),
-           answer=verdict("Pick up Deebo Samuel", "Deebo Samuel becomes the WR1 by depth chart."))
+           answer=verdict("Pick up Brandin Cooks", "Deebo Samuel becomes the WR1 by depth chart."))
     result = analyze("Mike Evans is out. Who becomes the 49ers' WR1, and should I pick him up?")
 
     assert [q.factor for q in result.queries] == [
@@ -208,7 +208,7 @@ def test_replacement_question_rates_usage_depth_and_games_without(real_sample, m
     assert "WR depth chart: 1. Mike Evans (WR1), 2. Deebo Samuel (WR2)" in depth_call[1]["content"]
     without = next(c for c in calls_for(model, analyst.FACTOR_PROMPT) if "Factor: Games without" in c[1]["content"])
     assert "He played every team game this season" in without[1]["content"]
-    assert result.answer == "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: pick up Deebo Samuel. Deebo Samuel becomes the WR1 by depth chart."
+    assert result.answer == "Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week; Brandin Cooks has the most recent target share of those who can play (7.2%), so for fantasy: pick up Brandin Cooks. Deebo Samuel becomes the WR1 by depth chart."
     assert result.premise_correction is None
 
 
@@ -283,9 +283,9 @@ def test_rule_based_replacement_verdict_names_the_stand_in(real_sample, model):
     result = analyze(BUCS)
     # The stand-in is a WR below Evans who can play (QA run: TE Kittle was picked on target share).
     # The literal answer (the depth chart) first, then the fantasy advice.
-    assert result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
-                                    "so for fantasy: pick up Deebo Samuel if available.")
-    assert "Deebo Samuel has the most recent target share among the WRs below Mike Evans on the depth chart (11.1%)." \
+    assert result.answer.startswith("Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week; Brandin Cooks has the most recent target share of those who can play (7.2%), "
+                                    "so for fantasy: pick up Brandin Cooks if available.")
+    assert "Brandin Cooks has the most recent target share among the WRs below Mike Evans on the depth chart (7.2%)." \
         in result.answer
     assert "Kittle" not in result.answer.split(".")[0]
 
@@ -616,8 +616,8 @@ def test_first_verdict_gets_hard_rules_for_a_replacement(real_sample, model):
     assert "- Never recommend picking up Christian McCaffrey: already on the user's roster." in rules
     assert '- The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.' in rules
     assert "Mike Evans WR" in rules and "George Kittle TE" in rules and "Christian McCaffrey RB" in rules
-    assert ('- The numbers back Deebo Samuel: Deebo Samuel has the most recent target share among the WRs below '
-            'Mike Evans on the depth chart not already on your roster (11.1%). Recommend him ("Pick up Deebo Samuel"), '
+    assert ('- The numbers back Brandin Cooks: Brandin Cooks has the most recent target share among the WRs below '
+            'Mike Evans on the depth chart not already on your roster (7.2%). Recommend him ("Pick up Brandin Cooks"), '
             'a WR like Mike Evans.') in rules
 
 
@@ -631,7 +631,7 @@ def test_replacement_hard_rule_names_the_codes_pick_off_the_roster(real_sample, 
                          roster=[RosterPlayer("00-0033288", "George Kittle", "SF", "TE")])
     analyze(BUCS, memory=memory)
     [call] = calls_for(model, analyst.VERDICT_PROMPT)
-    assert 'Recommend him ("Pick up Deebo Samuel"), a WR like Mike Evans.' in call[1]["content"]
+    assert 'Recommend him ("Pick up Brandin Cooks"), a WR like Mike Evans.' in call[1]["content"]
     assert 'Pick up Christian McCaffrey' not in call[1]["content"]
 
 

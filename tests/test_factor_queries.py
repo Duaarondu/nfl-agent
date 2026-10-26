@@ -285,7 +285,7 @@ def test_planned_sql_never_orders_by_an_aggregate():
         for order_by in re.findall(r"ORDER BY ([^)]*?)(?: LIMIT|$|\))", q.sql):
             assert not re.search(r"\b(SUM|AVG|COUNT|MIN|MAX)\(", order_by), (q.factor, order_by)
     usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]
-    assert "ORDER BY targets DESC LIMIT 12" in usage.sql
+    assert "ORDER BY targets DESC, carries DESC LIMIT 25" in usage.sql
 
 
 # --- compare: two players head to head ---

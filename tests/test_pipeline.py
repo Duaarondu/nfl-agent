@@ -10,15 +10,17 @@ from app.agents import analyst, critic
 from app import pipeline
 
 BUCS = "Who becomes the Bucs' WR1 if Mike Evans is out?"
-SAMUEL = json.dumps({"verdict": "Start Deebo Samuel", "why": "The depth chart ranks him second."})
+# Deebo Samuel, next on the chart, was Out in week 6 and is not practising for week 7 (QA, 26 Oct).
+SAMUEL = json.dumps({"verdict": "Start Brandin Cooks", "why": "The depth chart ranks him third."})
 # Kittle is a TE: not a stand-in for Evans, a WR (QA run, 26 Oct: same position, below him on the depth chart).
 KITTLE = json.dumps({"verdict": "Pick up George Kittle", "why": "His 24.9% recent target share leads the 49ers after Evans."})
 # A replacement answer opens with the depth chart's answer, then the fantasy advice.
-SAMUEL_LEAD = "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: start Deebo Samuel."
-KITTLE_LEAD = ("Deebo Samuel is next at WR on the depth chart, "
+SAMUEL_LEAD = ("Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week; "
+               "Brandin Cooks has the most recent target share of those who can play (7.2%), so for fantasy: start Brandin Cooks.")
+KITTLE_LEAD = ("Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week, "
                "so for fantasy: pick up George Kittle")
 NOT_A_WR = ("George Kittle is not a WR below Mike Evans on the SF depth chart who can play; "
-            "the stand-ins are Deebo Samuel, Brandin Cooks, Jacob Cowing.")
+            "the stand-ins are Brandin Cooks, Jacob Cowing, Jordan Watkins.")
 NO_ISSUES = json.dumps({"issues": []})
 
 
@@ -53,7 +55,7 @@ def test_flagged_verdict_is_revised_then_approved(real_sample, model, trace_dir)
     run = pipeline.answer(BUCS)
 
     assert run.first_answer == f"{KITTLE_LEAD}. His 24.9% recent target share leads the 49ers after Evans."
-    assert run.result.answer == f"{SAMUEL_LEAD} The depth chart ranks him second."
+    assert run.result.answer == f"{SAMUEL_LEAD} The depth chart ranks him third."
     assert run.approved and [c.status for c in run.critiques] == ["needs_revision", "approved"]
     assert run.critiques[0].blocking[0].check == "verdict_support"
     # Factor agents ran once (3 factors); the verdict ran twice: first answer and one revision.
@@ -97,7 +99,7 @@ def test_a_hard_rule_broken_twice_gets_the_rule_based_verdict_in_round_3(real_sa
     assert len(calls(model, analyst.VERDICT_PROMPT)) == 2  # first answer + 1 revision; round 3 needs no model
     assert len(calls(model, critic.REVIEW_PROMPT)) == 3  # the Critic checks the rule-based verdict too
     assert run.result.verdict_by == "rule-based"
-    assert "pick up Deebo Samuel" in run.result.answer
+    assert "pick up Brandin Cooks" in run.result.answer
     assert run.result.answer.endswith("(Rule-based verdict: the model recommended a player the usage numbers "
                                       "do not back twice, so fixed thresholds were applied.)")
     lines = read_trace(trace_dir)
@@ -112,7 +114,7 @@ def test_a_hard_rule_broken_twice_gets_the_rule_based_verdict_in_round_3(real_sa
 def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, trace_dir):
     # A copied support label is not a hard rule, so the model keeps the revisions and the
     # run can end unresolved, with the reason in the critic note.
-    labelled = json.dumps({"verdict": "Pick up Deebo Samuel", "why": "Team usage [strong]: 11.1% recent target share."})
+    labelled = json.dumps({"verdict": "Pick up Brandin Cooks", "why": "Team usage [strong]: 11.1% recent target share."})
     script(model, [labelled])
     run = pipeline.answer(BUCS)
 
@@ -143,8 +145,8 @@ def test_failed_revision_falls_back_to_the_rule_verdict(real_sample, model, trac
 
     # The rule-based stand-in is a WR below Evans, so it passes on round 2.
     assert run.approved and run.result.verdict_by == "rule-based"
-    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
-                                        "so for fantasy: pick up Deebo Samuel if available.")
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart but is likely out: listed Out last week and did not practice this week; Brandin Cooks has the most recent target share of those who can play (7.2%), "
+                                        "so for fantasy: pick up Brandin Cooks if available.")
     [revise] = [l for l in read_trace(trace_dir) if l["action"] == "revise"]
     assert (revise["status"], revise["verdict_by"]) == ("fallback", "rule-based")
 
@@ -175,7 +177,8 @@ def test_review_runs_the_loop_on_a_saved_answer(model, trace_dir):
     """What scripts/demo_critic.py does: the Oct 22 "Start Deebo Samuel" answer, no Analyst run."""
     from helpers import load_example
 
-    script(model, [SAMUEL])
+    # The saved run's rows predate the practice-report columns, so Samuel can still play there.
+    script(model, [json.dumps({"verdict": "Start Deebo Samuel", "why": "The depth chart ranks him second."})])
     run = pipeline.review(load_example("who-becomes-the-bucs", run="d52e2e813360"))
 
     assert run.first_answer.startswith("Start Deebo Samuel. The depth chart [strong]")
@@ -183,7 +186,8 @@ def test_review_runs_the_loop_on_a_saved_answer(model, trace_dir):
     # Samuel is a valid stand-in now; only the copied support labels block the saved answer.
     assert {i.claim for i in run.critiques[0].blocking} == {"[strong]", "[not supported]"}
     assert {i.check for i in run.critiques[0].blocking} == {"artifacts"}
-    assert run.result.answer == f"{SAMUEL_LEAD} The depth chart ranks him second."
+    assert run.result.answer == ("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+                                 "so for fantasy: start Deebo Samuel. The depth chart ranks him second.")
     assert not calls(model, analyst.FACTOR_PROMPT) and not calls(model, analyst.CLASSIFY_PROMPT)
 
 

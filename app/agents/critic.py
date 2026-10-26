@@ -316,7 +316,7 @@ def _stand_in_support(result: AnalystResult, verdict: str, name: str, results) -
     the depth chart, able to play; a confident pick far behind the pool's leader is blocked."""
     subject = result.player
     roster = tuple(result.user_context.roster_names) if result.user_context else ()
-    pool = factor_queries.stand_in_pool(subject, results, roster)
+    pool = factor_queries.stand_in_pool(subject, results, roster, result.question)
     if not pool:
         return []
     names = [n for n, _, _ in pool]

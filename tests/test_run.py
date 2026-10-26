@@ -133,7 +133,7 @@ def test_run_with_memory(server, model, tmp_path, monkeypatch):
     m = body["memory"]
     assert (m["scoring"], m["teams"], [p["name"] for p in m["roster"]]) == ("half", 12, ["George Kittle", "Davante Adams"])
     assert len(m["stored_this_run"]) == 4 and body["steps"]["memory_mining"] == "code"
-    assert "so for fantasy: pick up Deebo Samuel" in body["answer"]
+    assert "so for fantasy: pick up Brandin Cooks" in body["answer"]
     assert body["premise_correction"].startswith("Mike Evans is on SF")
 
 

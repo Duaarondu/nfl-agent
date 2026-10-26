@@ -69,7 +69,7 @@ def test_league_memory_carries_across_processes(tmp_path):
     assert "half-PPR points per game" in answer
     assert "PPR" not in answer.replace("half-PPR", "")
     # The stand-in is a WR below Evans (QA run: TE Kittle, then RB McCaffrey, were picked on target share).
-    assert "so for fantasy: pick up Deebo Samuel" in answer
+    assert "so for fantasy: pick up Brandin Cooks" in answer
     assert "pick up George Kittle" not in answer
     assert second["approved"] and result["verdict_by"] == "rule-based"
 

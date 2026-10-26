@@ -125,7 +125,15 @@ def says_out(question: str, name: str | None = None) -> bool:
     if name is None:
         return re.search(rf"\b{OUT_PHRASE}", question, re.I) is not None
     key = name_key(name).split()
-    return bool(key) and re.search(rf"\b{re.escape(key[-1])}(?:['’]s)?\s+{OUT_PHRASE}", question, re.I) is not None
+    # "Mike Evans and Deebo Samuel are out" says both (QA, 26 October 2026: only Samuel counted).
+    more = r"(?:\s*(?:,|\band\b|&)\s*(?:[\w.'’-]+\s+){0,2}[\w.'’-]+)*"
+    return bool(key) and re.search(rf"\b{re.escape(key[-1])}(?:['’]s)?{more}\s+{OUT_PHRASE}", question, re.I) is not None
+
+
+def replaced_in(question: str, player: Player) -> bool:
+    """"Who replaces Mike Evans?" / "replace Evans": the player named right after the verb."""
+    span = name_span(player, question)
+    return bool(span) and re.search(r"\breplac(?:e|es|ing)\s+$", question[:span[0]], re.I) is not None
 
 
 # Words that ask who takes over: "Who becomes the Bucs' WR1?", "Who replaces Evans?"
@@ -585,8 +593,13 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
             "ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, "
             f"ROUND({s.expr('ps.')}, 1) AS {s.key}_points "
             "FROM NFLVERSE.player_stats ps "
+            # Snap counts by PFR ID through the rosters, by name only without one (QA, 26 October
+            # 2026: "Luther Burden III" vs "Luther Burden", "DK" vs "D.K." left snap share n/a).
+            "LEFT JOIN (SELECT gsis_id, MAX(pfr_id) AS pfr_id FROM NFLVERSE.rosters "
+            f"WHERE season = {season} GROUP BY gsis_id) rid ON rid.gsis_id = ps.player_id "
             "LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id "
-            "AND sc.player = ps.player_display_name AND sc.team = ps.team "
+            "AND (sc.pfr_player_id = rid.pfr_id "
+            "OR (rid.pfr_id IS NULL AND sc.player = ps.player_display_name AND sc.team = ps.team)) "
             f"WHERE ps.season = {season} AND ps.player_id = {pid} ORDER BY ps.week",
         ),
         PlannedQuery(
@@ -682,19 +695,22 @@ def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> l
             f"SUM(carries) AS carries, ROUND(AVG({s.expr()}), 1) AS {s.key}_per_game "
             f"FROM NFLVERSE.player_stats WHERE season = {season} AND team = {team} "
             "AND position IN ('RB', 'WR', 'TE') "
-            "GROUP BY player_display_name, position ORDER BY targets DESC LIMIT 12",
+            "GROUP BY player_display_name, position ORDER BY targets DESC, carries DESC LIMIT 25",
         ),
         PlannedQuery(
             "Depth chart",
             f"{p.team} current {pos} depth chart (pos_rank 1 = top), with roster status and the week "
             f"{latest_week + 1} injury report",
             "SELECT DISTINCT d.pos_abb, d.pos_rank, d.player_name, r.status AS roster_status, "
-            "i.report_status FROM NFLVERSE.depth_charts d "
+            "i.report_status, i.practice_status, pw.prev_report_status FROM NFLVERSE.depth_charts d "
             "LEFT JOIN (SELECT gsis_id, MAX(status) AS status FROM NFLVERSE.rosters "
             f"WHERE season = {season} AND week = (SELECT MAX(week) FROM NFLVERSE.rosters WHERE season = {season}) "
             "GROUP BY gsis_id) r ON r.gsis_id = d.gsis_id "
-            "LEFT JOIN (SELECT gsis_id, MAX(report_status) AS report_status FROM NFLVERSE.injuries "
-            f"WHERE season = {season} AND week = {latest_week + 1} GROUP BY gsis_id) i ON i.gsis_id = d.gsis_id "
+            "LEFT JOIN (SELECT gsis_id, MAX(report_status) AS report_status, MAX(practice_status) AS practice_status "
+            f"FROM NFLVERSE.injuries WHERE season = {season} AND week = {latest_week + 1} GROUP BY gsis_id) i "
+            "ON i.gsis_id = d.gsis_id "
+            "LEFT JOIN (SELECT gsis_id, MAX(report_status) AS prev_report_status FROM NFLVERSE.injuries "
+            f"WHERE season = {season} AND week = {latest_week} GROUP BY gsis_id) pw ON pw.gsis_id = d.gsis_id "
             f"WHERE d.team = {team} AND d.pos_abb = {_quote(pos)} "
             f"AND d.dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = {team}) "
             "ORDER BY d.pos_rank LIMIT 25",
@@ -761,8 +777,13 @@ def compare_bundle(
             "ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, "
             f"ROUND({pts}, 1) AS {s.key}_points "
             "FROM NFLVERSE.player_stats ps "
+            # Snap counts by PFR ID through the rosters, by name only without one (QA, 26 October
+            # 2026: "Luther Burden III" vs "Luther Burden", "DK" vs "D.K." left snap share n/a).
+            "LEFT JOIN (SELECT gsis_id, MAX(pfr_id) AS pfr_id FROM NFLVERSE.rosters "
+            f"WHERE season = {season} GROUP BY gsis_id) rid ON rid.gsis_id = ps.player_id "
             "LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id "
-            "AND sc.player = ps.player_display_name AND sc.team = ps.team "
+            "AND (sc.pfr_player_id = rid.pfr_id "
+            "OR (rid.pfr_id IS NULL AND sc.player = ps.player_display_name AND sc.team = ps.team)) "
             f"WHERE ps.season = {season} AND ps.player_id IN ({ids}) ORDER BY ps.player_display_name, ps.week",
         ),
         PlannedQuery(
@@ -845,11 +866,15 @@ def matchup_query(
         "SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, "
         "CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, "
         f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank, r.teams_ranked, r.opp_games, "
-        "p.roster_status, i.report_status, i.report_primary_injury "
+        "p.roster_status, i.report_status, i.report_primary_injury, i.practice_status, "
+        "pw.report_status AS prev_report_status "
         "FROM players p LEFT JOIN target t ON t.team = p.team "
         "LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status, "
-        "MAX(report_primary_injury) AS report_primary_injury FROM NFLVERSE.injuries "
+        "MAX(COALESCE(report_primary_injury, practice_primary_injury)) AS report_primary_injury, "
+        "MAX(practice_status) AS practice_status FROM NFLVERSE.injuries "
         f"WHERE season = {season} GROUP BY gsis_id, week) i ON i.gsis_id = p.player_id AND i.week = t.week "
+        "LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status FROM NFLVERSE.injuries "
+        f"WHERE season = {season} GROUP BY gsis_id, week) pw ON pw.gsis_id = p.player_id AND pw.week = t.week - 1 "
         "LEFT JOIN games g ON g.team = p.team AND g.week = t.week "
         "LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position "
         "ORDER BY p.player",
@@ -1037,7 +1062,7 @@ def _team_usage(t: _Rows) -> list[str]:
     if rbs:
         lines.append("RB carries: " + "; ".join(
             f"{names[i]} {_fmt(carries[i])} in {_fmt(games[i])} games ({_fmt(round(carries[i] / games[i], 1))} per game)"
-            for i in sorted(rbs, key=lambda i: -carries[i])[:3]) + ".")
+            for i in sorted(rbs, key=lambda i: -carries[i])[:6]) + ".")
     return lines
 
 
@@ -1452,15 +1477,47 @@ def _first_sentence(text: str) -> str:
 MIN_GAMES = 2  # a stand-in's usage needs at least this many games (QA run: picks rested on one game)
 
 
-def depth_below(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> list[str]:
-    """The depth chart's names ranked below the player (all of them if he is not listed)."""
+def chart_unavailable(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
+    """{depth chart name: why he can't play}: listed Out, likely out, or on reserve."""
+    d = _Rows(*results.get("Depth chart", ([], [])))
+    away = {}
+    for n, roster, report, practice, prev in zip(d.text("player_name"), d.text("roster_status"), d.text("report_status"),
+                                                 d.text("practice_status"), d.text("prev_report_status")):
+        if report.lower() == "out":
+            away[n] = "is listed Out"
+        elif roster in UNAVAILABLE_ROSTER:
+            away[n] = UNAVAILABLE_ROSTER[roster]
+        elif likely_out("", report, practice, prev):
+            away[n] = likely_out("", report, practice, prev)
+    return away
+
+
+def on_chart(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> bool:
+    """He is on his position's depth chart and can play, so "below him" means something."""
     names = _Rows(*results.get("Depth chart", ([], []))).text("player_name")
-    at = next((i for i, n in enumerate(names) if same_player(n, player.name)), -1)
+    at = next((n for n in names if same_player(n, player.name)), None)
+    return at is not None and at not in chart_unavailable(results)
+
+
+def depth_below(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> list[str]:
+    """The depth chart's names ranked below the player. If he is not on it, or is already on
+    reserve or Out there, everyone else on it (QA run: "Jalen Hurts is out", fourth on the chart
+    on reserve, got no stand-in; Odell Beckham Jr., not on the chart, got "below him")."""
+    names = _Rows(*results.get("Depth chart", ([], []))).text("player_name")
+    if not on_chart(player, results):
+        return [n for n in names if not same_player(n, player.name)]
+    at = next(i for i, n in enumerate(names) if same_player(n, player.name))
     return names[at + 1:]
 
 
+def _chart_place(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> str:
+    """"below Mike Evans on the depth chart", or "on the MIN depth chart" when he isn't on it."""
+    return f"below {player.name} on the depth chart" if on_chart(player, results) else f"on the {player.team} depth chart"
+
+
 def stand_in_pool(
-    player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = ()
+    player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = (),
+    question: str = "",
 ) -> list[tuple[str, float | None, str]]:
     """(name, value, what) for each player who could take his place, best first: the same
     position (the depth chart is his position's), ranked below him, not Out or on reserve,
@@ -1468,14 +1525,14 @@ def stand_in_pool(
     target share, QBs by the depth chart; usage from fewer than MIN_GAMES games does not
     count. QA run: McCaffrey out got Mike Evans, Godwin out got Egbuka (ranked above him)."""
     d = _Rows(*results.get("Depth chart", ([], [])))
-    unavailable_names = {n for n, roster, report in zip(d.text("player_name"), d.text("roster_status"), d.text("report_status"))
-                         if (report or "").lower() == "out" or roster in UNAVAILABLE_ROSTER}
+    unavailable_names = set(chart_unavailable(results))
     u = _Rows(*results.get("Team usage", ([], [])))
     # Without a depth chart (the query failed), his position's players in the usage rows.
     ranked = depth_below(player, results) if d.rows else [
         n for n, pos in zip(u.text("player_display_name"), u.text("position"))
         if pos == player.position and not same_player(n, player.name)]
-    below = [n for n in ranked if n not in unavailable_names and not any(same_player(n, x) for x in exclude)]
+    below = [n for n in ranked if n not in unavailable_names and not any(same_player(n, x) for x in exclude)
+             and not (question and says_out(question, n))]  # another player the question says is out
     column, what = {"RB": ("carries", "carries"), "QB": (None, "")}.get(
         player.position, ("recent_target_share_pct", "recent target share"))
     values = {}
@@ -1488,11 +1545,12 @@ def stand_in_pool(
 
 
 def _next_up(
-    player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = ()
+    player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = (),
+    question: str = "",
 ) -> tuple[str | None, str]:
     """(stand-in, reason): the top of stand_in_pool. Players in exclude (already on the
     user's roster) are skipped."""
-    pool = stand_in_pool(player, results, exclude)
+    pool = stand_in_pool(player, results, exclude, question)
     if not pool:
         return None, ""
     name, value, what = pool[0]
@@ -1500,16 +1558,19 @@ def _next_up(
     below = depth_below(player, results)
     nxt = below[0] if below else None
     if value is None:
+        if not on_chart(player, results):
+            return name, f"{name} is the top {pos} on the {player.team} depth chart who can play."
         return name, f"{name} is the next {pos} below {player.name} on the depth chart who can play."
     unit = "%" if "share" in what else f" {what}"
-    among = f"{pos}s below {player.name} on the depth chart" + (" not already on your roster" if exclude else "")
+    among = f"{pos}s {_chart_place(player, results)}" + (" not already on your roster" if exclude else "")
     reason = f"{name} has the most {what} among the {among} ({_fmt(value)}{unit})."
     u = _Rows(*results.get("Team usage", ([], [])))
     row = next((i for i, n in enumerate(u.text("player_display_name")) if same_player(n, name)), None)
     if row is not None:
         reason += _per_game(u, row, "this season")
+    away = chart_unavailable(results)
     if nxt and not same_player(nxt, name):
-        reason += f" {nxt} is next on the depth chart."
+        reason += f" {nxt} is next on the depth chart" + (f" but {away[nxt]}." if nxt in away else ".")
     return name, reason
 
 
@@ -1545,7 +1606,9 @@ def same_player(a: str, b: str) -> bool:
     return bool(name_key(a)) and name_key(a) == name_key(b)
 
 
-def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[list]]], verdict: str) -> str | None:
+def replacement_lead(
+    player: Player, results: dict[str, tuple[list[str], list[list]]], verdict: str, question: str = ""
+) -> str | None:
     """A replacement answer's first sentence: the literal question, then the fantasy advice.
 
     "Deebo Samuel is next at WR on the depth chart, but the target share points to
@@ -1559,11 +1622,21 @@ def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[li
     advice = advice[:1].lower() + advice[1:]
     m = re.match(r"(?:pick up|add|start)\s+(.+?)(?:\s+if available)?$", advice, re.I)
     pick = m.group(1) if m else None
-    pool = {n: (v, what) for n, v, what in stand_in_pool(player, results)}
+    pool = {n: (v, what) for n, v, what in stand_in_pool(player, results, question=question)}
     value, what = next(((v, w) for n, (v, w) in pool.items() if pick and same_player(n, pick)), (None, ""))
     shown = (f"{_fmt(value)}%" if "share" in what else f"{_fmt(value)} {what}") if value is not None else None
-    lead = f"{depth[0]} is next at {player.position} on the depth chart"
-    if pick and same_player(pick, depth[0]):
+    away = chart_unavailable(results)
+    if on_chart(player, results):
+        lead = f"{depth[0]} is next at {player.position} on the depth chart"
+    else:
+        lead = f"{depth[0]} is the top {player.position} on the {player.team} depth chart without {player.name}"
+    if question and depth[0] not in away and says_out(question, depth[0]):
+        away[depth[0]] = "is out too, as the question says"
+    if depth[0] in away:  # QA run: "Deebo Samuel is next ... but the target share points to Cooks"
+        lead += f" but {away[depth[0]]}"
+        if pick and shown:
+            lead += f"; {pick} has the most {what} of those who can play ({shown})"
+    elif pick and same_player(pick, depth[0]):
         lead += f" ({shown} {what})" if shown and "share" in what else f" ({shown})" if shown else ""
     elif pick and shown:
         lead += f", but the {what} points to {pick} ({shown})"
@@ -1635,6 +1708,23 @@ UNAVAILABLE_ROSTER = {"RES": "is on reserve (RES)", "CUT": "is not on a roster (
 QUESTION_OUT = "is out, as the question says"
 
 
+def likely_out(week: str, report: str, practice: str, prev: str, injury: str = "") -> str | None:
+    """Why a player with no game status yet is still unlikely to play: listed Out or Doubtful
+    the week before and not practising this week. Most teams' game statuses come out late in
+    the week, so the matchup week often has practice rows only (QA, 26 October 2026: Deebo
+    Samuel, Out in week 6 and not practising for week 7, was "playing" and a pickup)."""
+    if report or not practice.lower().startswith("did not") or prev not in ("Out", "Doubtful"):
+        return None
+    before, now = (f"for week {int(week) - 1}", f"for week {week}") if week.isdigit() else ("last week", "this week")
+    hurt = f" ({injury.lower()})" if injury else ""
+    return f"is likely out: listed {prev} {before} and did not practice {now}{hurt}"
+
+
+def missed_practice(report: str, practice: str) -> bool:
+    """No game status yet, and he did not take part in practice."""
+    return not report and practice.lower().startswith("did not")
+
+
 def unavailable(results: dict[str, tuple[list[str], list[list]]], question: str = "") -> dict[str, str]:
     """{player: why he cannot play} in the matchup week: on bye, listed Out, or on reserve
     (QA run: Monangai, Out in week 7, and Adams, RES, both got "Start"); with the question,
@@ -1643,14 +1733,16 @@ def unavailable(results: dict[str, tuple[list[str], list[list]]], question: str 
     t = _Rows(*results.get("Next matchup", ([], [])))
     out = {name: f"is on bye in week {week}" for name, week in on_bye(results).items()}
     statuses = zip(t.text("player"), t.text("game_week"), t.text("report_status"), t.text("report_primary_injury"),
-                   t.text("roster_status"))
-    for name, week, report, injury, roster in statuses:
+                   t.text("roster_status"), t.text("practice_status"), t.text("prev_report_status"))
+    for name, week, report, injury, roster, practice, prev in statuses:
         if name in out:
             continue
         if report and report.lower() == "out":
             out[name] = f"is listed Out for week {week}" + (f" ({injury.lower()})" if injury else "")
         elif roster in UNAVAILABLE_ROSTER:
             out[name] = UNAVAILABLE_ROSTER[roster]
+        elif likely_out(week, report, practice, prev, injury):
+            out[name] = likely_out(week, report, practice, prev, injury)
         elif question and says_out(question, name):
             out[name] = QUESTION_OUT
     return out
@@ -1677,10 +1769,13 @@ def status_verdict(
     report = t.text("report_status")[entry] if entry is not None else ""
     source = f"Source: the week {week} injury report and the rosters table."
     if away:
-        return f"{'Yes' if asks_out else 'No'}: {player.name} {away}", f"{source} Sit {player.name}."
+        return f"{'Yes' if asks_out else 'No'}: {player.name} {away}", f"{source} Sit {player.name.rstrip('.')}."
     status = f"listed {report} for week {week}" if report else f"has no game status on the week {week} injury report"
     detail = f" ({practice})" if practice else ""
     lead = "Probably not" if report in ("Doubtful",) else "Questionable" if report == "Questionable" else "Yes"
+    if missed_practice(report, practice):  # QA run: "Yes ... (Did Not Participate In Practice)"
+        lead, status = "Uncertain", f"has no game status yet for week {week}, and did not practice"
+        detail = ""
     lead = {"Yes": "No", "Probably not": "Probably"}.get(lead, lead) if asks_out else lead
     return f"{lead}: {player.name} {status}{detail}", source
 
@@ -1733,6 +1828,16 @@ def _row_name(name: str, by_name: dict[str, Any]) -> str:
     return next((n for n in by_name if same_player(n, name)), name)
 
 
+def _his(player: Player, *values: tuple[float | None, str]) -> str:
+    """"he has 4.7 carries per game and 1.7 PPR points per game." with only the values the data
+    has, never "n/a" (QA run: "his are n/a% and 15" ended with a Critic note)."""
+    known = [what.format(_fmt(v)) for v, what in values if v is not None]
+    if not known:
+        return f"he has no recent games for {player.team} in the data."
+    listed = known[0] if len(known) == 1 else f"{', '.join(known[:-1])} and {known[-1]}"
+    return f"he has {listed}."
+
+
 def rule_verdict(
     question_type: str, player: Player, results: dict[str, tuple[list[str], list[list]]],
     ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (), out: bool = False,
@@ -1771,7 +1876,7 @@ def rule_verdict(
         why += f" {rule}"
         why = _with_matchup(why, results)
     elif question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):
-        stand_in, reason = _next_up(player, results, roster)
+        stand_in, reason = _next_up(player, results, roster, question)
         verdict = f"Pick up {stand_in} if available" if stand_in else f"Hold until {player.team}'s next depth chart"
         why = f"{why} {reason}" if reason else why
     elif question_type == "start_sit":
@@ -1783,7 +1888,8 @@ def rule_verdict(
             why += f" Rule: he {away}."
         else:
             verdict = f"{'Start' if ppr is not None and ppr >= START_PPR else 'Sit'} {player.name}"
-            why += f" Rule: start at {_fmt(START_PPR)}+ {s.label} per game; he averages {_fmt(ppr)}."
+            why += f" Rule: start at {_fmt(START_PPR)}+ {s.label} points per game; " + (
+                f"he averages {_fmt(ppr)}." if ppr is not None else f"he has no games for {player.team} this season.")
         why = _with_matchup(why, results)
     elif question_type == "waiver" and DROP_CUE.search(question or ""):
         # "Should I drop Dalton Kincaid?": keep or drop, never "Pick up" (QA run).
@@ -1794,12 +1900,10 @@ def rule_verdict(
         keep = (share is not None and share >= PICKUP_SHARE) or (ppr is not None and ppr >= START_PPR) or (
             runs is not None and runs >= PICKUP_CARRIES)
         verdict = f"{'Keep' if keep else 'Drop'} {player.name}"
-        if runs is not None:
-            why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share, {_fmt(PICKUP_CARRIES)}+ carries per game "
-                    f"or {_fmt(START_PPR)}+ {s.label} per game; his are {_fmt(share)}%, {_fmt(runs)} and {_fmt(ppr)}.")
-        else:
-            why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share or {_fmt(START_PPR)}+ {s.label} per game; "
-                    f"his are {_fmt(share)}% and {_fmt(ppr)}.")
+        bar = (f"{_fmt(PICKUP_SHARE)}%+ recent target share, {_fmt(PICKUP_CARRIES)}+ carries per game or "
+               if runs is not None else f"{_fmt(PICKUP_SHARE)}%+ recent target share or ")
+        why += f" Rule: keep at {bar}{_fmt(START_PPR)}+ {s.label} points per game; " + _his(
+            player, (share, "{}% recent target share"), (runs, "{} carries per game"), (ppr, "{} " + s.label + " points per game"))
         why = _with_matchup(why, results)
     elif question_type == "waiver":
         share = _usage(player, results, "recent_target_share_pct")
@@ -1807,13 +1911,27 @@ def rule_verdict(
             verdict = f"Hold {player.name} (already on your roster)"
         runs = _carries_per_game(player, results)
         busy = (share is not None and share >= PICKUP_SHARE) or (runs is not None and runs >= PICKUP_CARRIES)
+        s = _scoring(results)
+        ppr = _usage(player, results, f"{s.key}_per_game")
+        if player.position == "QB":  # QA run: a QB was judged on target share ("his is n/a%")
+            busy = ppr is not None and ppr >= START_PPR
+        # A pickup must be able to play: Out, likely out or on reserve is "hold off" (QA run: Monangai, Out,
+        # was "Pick up"). A bye week does not stop a pickup.
+        away = next((r for n, r in unavailable(results).items() if same_player(n, player.name) and "bye" not in r), None)
         if not any(same_player(player.name, x) for x in roster):
-            verdict = f"{'Pick up' if busy else 'Hold off on'} {player.name}"
-        if runs is not None:
+            verdict = f"{'Pick up' if busy and not away else 'Hold off on'} {player.name}"
+            if away:
+                why += f" Rule: he {away}, so he can't help you this week."
+        if player.position == "QB":
+            why += f" Rule: pick up a QB at {_fmt(START_PPR)}+ {s.label} points per game; " + _his(
+                player, (ppr, "{} " + s.label + " points per game"))
+        elif runs is not None:
             why += (f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share or, for an RB, "
-                    f"{_fmt(PICKUP_CARRIES)}+ carries per game; his are {_fmt(share)}% and {_fmt(runs)}.")
+                    f"{_fmt(PICKUP_CARRIES)}+ carries per game; " + _his(
+                        player, (share, "{}% recent target share"), (runs, "{} carries per game")))
         else:
-            why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; his is {_fmt(share)}%."
+            why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; " + _his(
+                player, (share, "{}% recent target share"))
         why = _with_matchup(why, results)
     elif question_type == "why":
         verdict = f"Hold {player.name}"
