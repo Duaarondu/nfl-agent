@@ -168,7 +168,7 @@ def _names_after(cue: re.Pattern, text: str) -> list[str]:
     cues = list(ROSTER_CUE.finditer(text)) + list(DROP_CUE.finditer(text))
     for m in cue.finditer(text):
         end = min([c.start() for c in cues if c.start() > m.start()] + [len(text)])
-        segment = re.split(r"[.?!;]\s|[.?!;]$|\n", text[m.end():end])[0]
+        segment = re.split(r"(?<!\b[A-Z])(?<!\bSt)[.?!;]\s|[.?!;]$|\n", text[m.end():end])[0]
         for piece in re.split(r",|\band\b|&|\bplus\b", segment):
             piece = LEADING_POS.sub("", piece.strip())
             found = NAME.match(piece)

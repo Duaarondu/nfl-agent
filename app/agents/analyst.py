@@ -321,6 +321,11 @@ def analyze(
 
     if free_sql:
         return _sql_loop(run_id, question, context, plan)
+    topic = factor_queries.unsupported_topic(question) if plan.question_type == "unsupported" else None
+    if plan.player is None and topic:
+        trace(run_id, AGENT_NAME, "answer", "unsupported", topic=topic)
+        raise AnalystError(factor_queries.unsupported_message(topic) + (
+            "" if topic == "kickers or defenses" else " Name the players to get their week-by-week numbers."))
     if plan.player is None:
         trace(run_id, AGENT_NAME, "answer", "error", reason="no player found")
         raise AnalystError(
@@ -337,7 +342,7 @@ def analyze(
     facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory, plan.name_note(),
                            question_type=plan.question_type, player=plan.player, players=plan.players, out=out)
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
-                       memory=memory, out=out, players=plan.players, name_note=plan.name_note())
+                       memory=memory, out=out, players=plan.players, name_note=plan.name_note(), question=question)
     result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
     result.user_context = memory
     return result
@@ -399,7 +404,7 @@ def revise_verdict(
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
         deadline=deadline, revision=issues, memory=result.user_context, out=out, players=result.players,
-        name_note=result.name_note, round=round, rule_based=rule_based,
+        name_note=result.name_note, round=round, rule_based=rule_based, question=result.question,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -571,7 +576,7 @@ def _verdict(
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
     revision: list[str] | None = None, memory: UserContext | None = None, out: bool = False,
     players: list[factor_queries.Player] | None = None, name_note: str | None = None, round: int | None = None,
-    rule_based: str | None = None,
+    rule_based: str | None = None, question: str = "",
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
@@ -583,6 +588,10 @@ def _verdict(
     note = ""
     results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
     reply, failed = None, None
+    if question_type == "unsupported":  # the model would answer the trade anyway: the code says what it can
+        rule_based = "this question type is not supported, so only the week's numbers are given"
+    if not meterless.configured():
+        rule_based = "no model configured (sample mode)"
     if not rule_based:
         try:
             reply = _model_verdict(run_id, facts, deadline, revision)
@@ -594,8 +603,11 @@ def _verdict(
         ranked = [(f.factor, f.support, f.summary) for f in factors]
         roster = memory.roster_names if memory else ()
         verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out,
-                                                   players=players)
-        note = f"(Rule-based verdict: {rule_based or 'the verdict model call failed'}, so fixed thresholds were applied.)"
+                                                   players=players, question=question)
+        if rule_based == "no model configured (sample mode)":
+            note = "(Rule-based: no model configured (sample mode).)"
+        else:
+            note = f"(Rule-based verdict: {rule_based or 'the verdict model call failed'}, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
               step="revise" if revision else "verdict", reason=(rule_based or failed or "")[:300],
@@ -694,20 +706,23 @@ def _hard_rules(
         rules.append(f"Never recommend picking up {', '.join(roster)}: already on the user's roster.")
     if question_type == "replacement":
         rules.append('The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.')
-    for name, week in factor_queries.on_bye(results).items():
+    away = factor_queries.unavailable(results)
+    for name, why in away.items():
         if question_type == "compare" and len(players) >= 2:
-            other = next((p.name for p in players if not factor_queries.same_player(p.name, name)), None)
-            if other:
-                rules.append(f"{name} is on bye in week {week}: start {other}.")
+            others = [p.name for p in players if not any(factor_queries.same_player(p.name, n) for n in away)]
+            if others:
+                rules.append(f"{name} {why}: never start him; start one of {', '.join(others)}.")
+            else:
+                rules.append(f"{name} {why}: none of the players can play, so the verdict is \"Sit\" for all of them.")
         elif question_type == "start_sit":
-            rules.append(f"He is on bye in week {week}: Sit {name}.")
+            rules.append(f"He {why}: Sit {name}.")
     if player and (question_type == "replacement" or (out and question_type in ("start_sit", "waiver"))):
         rules += _backed_pick(player, results, tuple(roster))
     elif player and question_type != "compare":
         rules.append(f'The verdict names its player ("Hold {player.name}", "Start {player.name}"), never a bare '
                      '"Hold" or "Start".')
     if question_type == "compare" and len(players) >= 2:
-        rules += _compare_leaders([p.name for p in players[:2]], results)
+        rules += _compare_leaders([p.name for p in players], results)
     positions = factor_queries.known_positions(list(results.values()))
     if player and player.position:
         positions.setdefault(player.name, player.position)
@@ -745,9 +760,13 @@ def _compare_leaders(names: list[str], results: dict[str, tuple[list[str], list[
     label = factor_queries.scoring_of(usage[0]).label
     get = lambda values, n: values.get(factor_queries._row_name(n, values))
     out = []
-    a, b = names
     ppg = factor_queries._per_game_by_player(usage) if usage[1] else {}
     late = factor_queries.h2h_values("Recent trend", *trend) if trend[1] else {}
+    if len(names) > 2:  # rank them all, then the top two as for a pair
+        ranked = sorted(names, key=lambda n: -(get(ppg, n) if get(ppg, n) is not None else -1))
+        listing = ", ".join(f"{n} {factor_queries._fmt(get(ppg, n))}" for n in ranked)
+        return [f"{label[:1].upper() + label[1:]} points per game: {listing}.", *_compare_leaders(ranked[:2], results)]
+    a, b = names
     leaders = []
     for values, what in ((ppg, f"{label} points per game"), (late, f"{label} points per game in the later weeks")):
         va, vb = get(values, a), get(values, b)
@@ -975,37 +994,47 @@ def _run_plan(
         return plan
     plan.queries.append(lookup)
 
-    # A choice ("Trey Mcbride or Bowers") may name a player by last name only.
-    choice = factor_queries.COMPARE_CUE.search(question) is not None and question_type in (
-        "compare", "start_sit", "waiver", "other")
-    if (choice and len(players) < 2) or not players:
+    # A choice ("Trey Mcbride or Bowers") may name a player by last name only; a player
+    # named as context ("Josh Allen on bye, Goff or Bryce Young?") is not one of the options.
+    choice = factor_queries.CHOICE_CUE.search(question) is not None and question_type in (
+        "compare", "start_sit", "waiver", "other", "unsupported")
+    context = [p for p in players if factor_queries.CONTEXT_AFTER.match(
+        question.lower().replace("’", "'"), (factor_queries.name_span(p, question) or (0, -1))[1])]
+    if (choice and len(players) - len(context) < 2) or not players:
         players = _last_names(run_id, question, plan, players, season, scoring, choice)
     if not players:
         plan.queries.clear()
         return plan
-    last_words = [n.word for n in plan.last_names if n.player]
-    if choice and question_type != "compare" and len(players) >= 2 and factor_queries.is_compare_question(
-            question, last_words):
-        trace(run_id, AGENT_NAME, "compare", "ok", reason="a choice between two players",
-              players=[p.name for p in players[:2]], from_type=question_type)
+    # "Josh Allen on bye, Goff or Bryce Young?": Allen is context, not an option.
+    context = factor_queries.context_players(question, players) if question_type not in ("why", "replacement")         and factor_queries.is_choice(question, players) else []
+    if context:
+        trace(run_id, AGENT_NAME, "compare", "context", players=[p.name for p in context])
+        players = [p for p in players if p not in context]
+    # Two or more players and a choice cue is a compare, whatever the capitals ("bucky irving
+    # or Jonathan Taylor", "Gibbs, Achane"; QA run). An unsupported question compares them too.
+    choice = question_type in ("compare", "start_sit", "waiver", "other", "unsupported") and \
+        factor_queries.is_choice(question, players)
+    if choice and question_type not in ("compare", "unsupported") and len(players) >= 2:
+        trace(run_id, AGENT_NAME, "compare", "ok", reason="a choice between players",
+              players=[p.name for p in players], from_type=question_type)
         question_type = plan.question_type = "compare"
     week_named = factor_queries.question_week(question)
 
-    if question_type == "compare":
+    if question_type in ("compare", "unsupported"):
+        # Every player the question names, not the first two (QA: "James Cook, Bijan Robinson
+        # or CeeDee Lamb?" dropped Lamb, the leader).
         pair = [p for n in player_names for p in players if factor_queries.same_player(p.name, n)]
-        pair = _unique(pair)
-        if len(pair) < 2:
-            pair = _unique([*pair, *players])[:2]
-        if len(pair) < 2:
+        pair = _unique([*pair, *players])
+        if len(pair) < 2 and question_type == "compare":
             trace(run_id, AGENT_NAME, "compare", "fallback", reason="fewer than two players found",
                   question_type="start_sit")
             question_type = plan.question_type = "start_sit"
-        else:
-            plan.players = pair[:2]
+        elif len(pair) >= 2:
+            plan.players = pair
             plan.player = plan.players[0]
-            # A team the question names that is neither player's is a wrong premise.
-            a, b = (factor_queries.wrong_teams(question, p) for p in plan.players)
-            plan.wrong_teams = [t for t in a if t in b]
+            # A team the question names that is no player's is a wrong premise.
+            wrong = [factor_queries.wrong_teams(question, p) for p in plan.players]
+            plan.wrong_teams = [t for t in wrong[0] if all(t in w for w in wrong[1:])]
             for planned in factor_queries.compare_bundle(plan.players, season, week, scoring, week_named):
                 record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
                 _run_query(run_id, record, action="factor_query")
@@ -1016,7 +1045,8 @@ def _run_plan(
     not_owned = [p for p in players if not (memory and memory.owns(p.name))]
     plan.player = (named or not_owned or players)[0]
     plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
-    for planned in factor_queries.plan(question_type, plan.player, season, week, scoring, week_named):
+    planned_type = "start_sit" if question_type == "unsupported" else question_type
+    for planned in factor_queries.plan(planned_type, plan.player, season, week, scoring, week_named):
         record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
         _run_query(run_id, record, action="factor_query")
         plan.queries.append(record)

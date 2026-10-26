@@ -37,6 +37,11 @@ class MeterlessError(RuntimeError):
 load_env()
 
 
+def configured() -> bool:
+    """Whether a model runtime is set up (sample mode can run without one)."""
+    return all(os.environ.get(k) for k in ("METERLESS_BASE_URL", "METERLESS_RUNTIME_TOKEN", "METERLESS_MODEL"))
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:

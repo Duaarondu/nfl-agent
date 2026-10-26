@@ -139,7 +139,9 @@ as `python run.py --serve`; `--port`, `--ui-port` (or `PORT`, `UI_PORT`) and `--
 change that. A port already in use fails to bind; it is never shared.
 
 Python 3.10+. Dependencies: duckdb, nflreadpy, polars, pytest. The servers use the
-standard library.
+standard library. Live mode also needs a Zetaris cluster (the data layer) and the
+Meterless Nightshift runtime, with an NVIDIA Nemotron model set up in Nightshift's
+Providers tab; sample mode needs neither.
 
 ### Live mode
 
@@ -248,7 +250,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 444 tests
+pytest           # 480 tests
 ```
 
 The tests cover:
@@ -414,8 +416,19 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
   questions.
 - **Self-hosted only.** Run it yourself with Docker or Python; there is no hosted
   deployment.
-- **Compare needs full names.** The keyword fallback recognises a two-player compare
-  question only when both players' full names are given.
+- **Questions that name no player** get "Name the player in full", except kicker and
+  defense questions ("I cover QB, RB, WR and TE only").
+- **No fuzzy matching.** A misspelt name is not found; nicknames ("CMC", "JSN") are
+  not recognised.
+- **Season 2026 only.** A question about another season is answered from 2026 data,
+  without a warning.
+- **League memory keeps its top 15 records** per question.
+- **Trades, rest-of-season value, dynasty, FAAB bids, handcuffs and streaming are not
+  supported.** The answer says so, then gives the named players' numbers for the week.
+- **Scoring variants.** TE premium, 6-point passing touchdowns and superflex are not
+  modelled; touchdown shares count 4 points per passing touchdown.
+- **One start threshold.** The rule-based start/sit verdict starts a player at 12+
+  points per game in every scoring (PPR, half-PPR and standard).
 
 ## Pre-existing work
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
-QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "compare", "other")
+QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "compare", "other", "unsupported")
 MAX_NAME_CANDIDATES = 60
 WHY_FACTORS = (
     "Opportunity", "Teammate absences", "Team pass rate and game script",
@@ -135,9 +135,41 @@ def is_pickup_question(question: str) -> bool:
     return bool(PICKUP_CUE.search(question)) and not REPLACEMENT_CUE.search(question) and not says_out(question)
 
 
+# Questions the app cannot answer: (pattern, what to say it cannot evaluate). QA run.
+UNSUPPORTED = (
+    (r"\b(?:kickers?|defen[cs]es?|d/st|dst)\b|\bstream(?:ing)?\s+(?:a\s+)?(?:k|def|dst)\b", "kickers or defenses"),
+    (r"\btrad(?:e|es|ed|ing)\b|\bis this (?:deal )?fair\b", "trades"),
+    (r"\bsell(?:ing)? high\b|\bbuy(?:ing)? low\b|\b(?:ros|rest[- ]of[- ](?:the[- ])?season)\b|\bdynasty\b"
+     r"|\blegit or (?:a )?fluke\b|\bfluke\b", "rest-of-season value"),
+    (r"\bfaab\b|\bhow much (?:should i )?(?:bid|spend)\b", "FAAB bids"),
+    (r"\bhandcuffs?\b", "handcuffs"),
+    (r"\bstream(?:ing|er|ers)?\b", "streaming"),
+)
+
+
+def unsupported_topic(question: str) -> str | None:
+    """"trades", "FAAB bids" ...: what the question asks that the app cannot evaluate, or None."""
+    return next((what for pattern, what in UNSUPPORTED if re.search(pattern, question, re.I)), None)
+
+
+def unsupported_message(topic: str) -> str:
+    if topic == "kickers or defenses":
+        return "I cover QB, RB, WR and TE only, not kickers or defenses."
+    return f"I can't evaluate {topic} yet."
+
+
+# "is X startable", "X @ DAL too tempting?", "is PHI a good matchup for X", "X worth a flex" (QA run).
+START_CUE = re.compile(r"\b(?:start|sit|bench|flex|startable|too tempting|good matchup|bad matchup|play him)\b"
+                       r"|\s@\s*[A-Z]|\bworth a (?:flex|start)\b", re.I)
+DROP_CUE = re.compile(r"\b(?:drop|cut|release)\b|\bshould i (?:hold|keep)\b", re.I)
+WAIVER_CUE = re.compile(r"\b(?:pick (?:him )?up|waivers?|add|adding|worth a pickup|must[- ]add|stash)\b", re.I)
+
+
 def guess_question_type(question: str) -> str:
     """Keyword fallback for when the model cannot classify the question."""
     text = question.lower()
+    if unsupported_topic(question):
+        return "unsupported"
     if is_why_question(text):
         return "why"
     if is_compare_question(question):
@@ -145,10 +177,10 @@ def guess_question_type(question: str) -> str:
     # "Should I pick up a 49ers receiver if Evans misses time?" asks who replaces him.
     if REPLACEMENT_CUE.search(text) or says_out(text):
         return "replacement"
-    if re.search(r"\b(start|sit|bench|flex)\b", text):
-        return "start_sit"
-    if re.search(r"\b(pick (him )?up|waiver|add|drop|stash)\b", text):
+    if WAIVER_CUE.search(text) or DROP_CUE.search(text):
         return "waiver"
+    if START_CUE.search(question):
+        return "start_sit"
     return "other"
 
 
@@ -157,6 +189,44 @@ COMPARE_CUE = re.compile(
     r"\b(?:or|vs\.?|versus|over)\b|\bbetween\b.+\band\b|\bwho should I (?:start|pick|play|choose)\b"
     r"|\bwhich (?:one|player|of them)\b", re.I)
 FULL_NAME = re.compile(r"\b[A-Z][a-z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+)+")
+# Any choice between players, with or without capitals: COMPARE_CUE, "need one", "pick 2",
+# "sit Lamb for Nacua", "A instead of B" (QA run). A comma or slash list is checked on the
+# players' positions in the question (listed_together).
+CHOICE_CUE = re.compile(
+    COMPARE_CUE.pattern + r"|\bneed (?:one|a|an|\d)\b|\bpick (?:one|two|\d)\b|\bsit\b.+\bfor\b|\binstead of\b", re.I)
+
+
+def name_span(player: "Player", text: str) -> tuple[int, int] | None:
+    """Where the question names this player: full name, else last name (lowercased text)."""
+    low = text.lower().replace("’", "'")
+    i = low.find(player.name.lower())
+    if i >= 0:
+        return i, i + len(player.name)
+    last = name_key(player.name).split()[-1:]
+    m = re.search(rf"\b{re.escape(last[0])}\b", low) if last else None
+    return (m.start(), m.end()) if m else None
+
+
+def listed_together(question: str, players: list["Player"]) -> bool:
+    """Two of the players are named next to each other with only a comma or slash between
+    ("Gibbs, Achane", "Hubbard/Henry")."""
+    spans = sorted(s for s in (name_span(p, question) for p in players) if s)
+    return any(re.fullmatch(r"\s*[,/]\s*", question[a[1]:b[0]]) for a, b in zip(spans, spans[1:]))
+
+
+def is_choice(question: str, players: list["Player"]) -> bool:
+    return CHOICE_CUE.search(question) is not None or listed_together(question, players)
+
+
+# "Josh Allen on bye, Goff or Bryce Young?": a player named as context, not an option.
+CONTEXT_AFTER = re.compile(r"\s*(?:'s\s+|\s+is\s+|\s+)?(?:on (?:a |his )?bye|(?:is )?out|ruled out|injured|hurt)\b", re.I)
+
+
+def context_players(question: str, players: list["Player"]) -> list["Player"]:
+    """Players the question says are on bye or out, when at least two others remain."""
+    low = question.lower().replace("’", "'")
+    ctx = [p for p in players if (s := name_span(p, question)) and CONTEXT_AFTER.match(low, s[1])]
+    return ctx if len(players) - len(ctx) >= 2 else []
 
 
 def is_compare_question(question: str, last_names: tuple[str, ...] | list[str] = ()) -> bool:
@@ -181,8 +251,8 @@ def _quote(text: str) -> str:
 
 def name_candidates(question: str) -> list[str]:
     """Every run of 2-3 words in the question, lowercased: possible full names."""
-    words = re.findall(r"[A-Za-z][A-Za-z.'\-]*", question)
-    words = [w.rstrip(".").removesuffix("'s").removesuffix("'") for w in words]
+    words = re.findall(r"[A-Za-z][A-Za-z.'\-]*", question.replace("’", "'"))
+    words = [_strip_word(w) for w in words]
     seen: list[str] = []
     for size in (2, 3):
         for i in range(len(words) - size + 1):
@@ -190,6 +260,16 @@ def name_candidates(question: str) -> list[str]:
             if candidate not in seen:
                 seen.append(candidate)
     return seen[:MAX_NAME_CANDIDATES]
+
+
+# "A.J.", "C.J." and "St." keep their periods: the rosters spell them "A.J. Brown",
+# "Amon-Ra St. Brown" (QA run: all three were "could not find").
+INITIALS = re.compile(r"(?:[A-Za-z]\.){1,3}|St\.", re.I)
+
+
+def _strip_word(w: str) -> str:
+    w = w if INITIALS.fullmatch(w) else w.rstrip(".")
+    return w.removesuffix("'s").removesuffix("'")
 
 
 # A generational suffix at the end of a name: "Deebo Samuel Sr." is "Deebo Samuel".
@@ -252,6 +332,7 @@ NOT_LAST_NAMES = {
     "ppr", "half", "standard", "league", "team", "roster", "lineup", "waiver", "waivers", "fantasy", "points",
     "game", "games", "season", "today", "tonight", "sunday", "monday", "thursday", "saturday", "qb", "rb", "wr",
     "te", "dst", "def", "kicker", "out", "injured", "hurt", "if", "please", "thanks", "hey", "help",
+    "i", "i'm", "im", "i've", "i'd", "hold", "sell", "buy", "cut", "release", "need", "bye",
 }
 CHOICE_WORDS = {"or", "vs", "vs.", "versus", "over"}
 
@@ -262,11 +343,17 @@ def last_name_words(question: str, found: list[Player]) -> list[str]:
     already found ("Trey Mcbride or Bowers" -> ["bowers"] once McBride is found)."""
     covered = {t for p in found for t in name_key(p.name).split()}
     teams = {w for names in TEAM_NAMES.values() for n in names for w in n.split()}
-    tokens = re.findall(r"[A-Za-z][A-Za-z.'\-]*", question.replace("’", "'"))
+    text = question.replace("’", "'")
+    found_tokens = list(re.finditer(r"[A-Za-z][A-Za-z.'\-]*", text))
+    tokens = [m.group(0) for m in found_tokens]
     clean = [t.rstrip(".").removesuffix("'s").removesuffix("'") for t in tokens]
 
     def name_like(j: int) -> bool:  # a capitalised word that is not a common word
         return 0 <= j < len(clean) and clean[j][:1].isupper() and clean[j].lower() not in NOT_LAST_NAMES
+
+    def joined(i: int, j: int) -> bool:  # only spaces between tokens i and j: "Gibbs, Achane" are two words
+        a, b = sorted((i, j))
+        return 0 <= a and b < len(tokens) and text[found_tokens[a].end():found_tokens[b].start()].isspace()
 
     words = []
     for i, raw in enumerate(tokens):
@@ -274,7 +361,7 @@ def last_name_words(question: str, found: list[Player]) -> list[str]:
         low = word.lower()
         if len(low) < 3 or low in NOT_LAST_NAMES or low in covered or low in teams or POSITION_LABEL.fullmatch(word):
             continue
-        if name_like(i - 1) or name_like(i + 1):
+        if (name_like(i - 1) and joined(i - 1, i)) or (name_like(i + 1) and joined(i, i + 1)):
             continue  # part of a full name ("Nobody Atall"): the full-name lookup's job
         prev = tokens[i - 1].lower() if i else ""
         nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
@@ -489,8 +576,8 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
         PlannedQuery(
             "Touchdowns and red zone",
             f"{p.name}: touchdowns, TD points vs {s.label} points, red-zone targets and carries by week",
-            "SELECT ps.week, ps.receiving_tds, ps.rushing_tds, "
-            "6 * (ps.receiving_tds + ps.rushing_tds) AS td_points, "
+            "SELECT ps.week, ps.receiving_tds, ps.rushing_tds, ps.passing_tds, "
+            "6 * (ps.receiving_tds + ps.rushing_tds) + 4 * ps.passing_tds AS td_points, "
             f"ROUND({s.expr('ps.')}, 1) AS {s.key}_points, "
             "COALESCE(rz.rz_targets, 0) AS rz_targets, COALESCE(rz.team_rz_targets, 0) AS team_rz_targets, "
             "COALESCE(rz.rz_carries, 0) AS rz_carries "
@@ -553,7 +640,17 @@ def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> l
             "ORDER BY pos_rank LIMIT 25",
         ),
     ]
-    return [q for q in bundle if not (p.position == "QB" and q.factor == "Team usage")]
+    if p.position == "QB":  # his own points per game is the start/sit basis (QA run: "averages n/a")
+        bundle[1] = PlannedQuery(
+            "Points per game",
+            f"{p.name}: games, passing and rushing touchdowns and {s.label} points per game this season",
+            "SELECT player_display_name, position, COUNT(*) AS games, SUM(passing_yards) AS passing_yards, "
+            "SUM(passing_tds) AS passing_tds, SUM(rushing_tds) AS rushing_tds, "
+            f"ROUND(AVG({s.expr()}), 1) AS {s.key}_per_game "
+            f"FROM NFLVERSE.player_stats WHERE season = {season} AND player_id = {_quote(p.player_id)} "
+            "GROUP BY player_display_name, position",
+        )
+    return bundle
 
 
 def games_without_query(p: Player, season: int, s: Scoring = PPR) -> PlannedQuery:
@@ -634,10 +731,12 @@ def compare_bundle(
         PlannedQuery(
             "Touchdown share",
             f"{names}: touchdowns and the share of {s.label} points that came from them",
-            "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, "
-            "6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, "
+            "SELECT ps.player_display_name AS player, "
+            "SUM(ps.receiving_tds + ps.rushing_tds + ps.passing_tds) AS touchdowns, "
+            "SUM(6 * (ps.receiving_tds + ps.rushing_tds) + 4 * ps.passing_tds) AS td_points, "
             f"ROUND(SUM({pts}), 1) AS {s.key}_points, "
-            f"ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM({pts}), 0), 1) AS td_share_pct "
+            "ROUND(100 * SUM(6 * (ps.receiving_tds + ps.rushing_tds) + 4 * ps.passing_tds) "
+            f"/ NULLIF(SUM({pts}), 0), 1) AS td_share_pct "
             f"FROM NFLVERSE.player_stats ps WHERE ps.season = {season} AND ps.player_id IN ({ids}) "
             "GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
         ),
@@ -660,7 +759,8 @@ def matchup_query(
     names = " vs ".join(p.name for p in players)
     roster = " UNION ALL ".join(
         f"SELECT {_quote(p.player_id)} AS player_id, {_quote(p.name)} AS player, {_quote(p.team)} AS team, "
-        f"{_quote(p.position if p.position in SKILL_POSITIONS else 'WR')} AS position"
+        f"{_quote(p.position if p.position in SKILL_POSITIONS else 'WR')} AS position, "
+        f"{_quote(str(p.status or ''))} AS roster_status"
         for p in players
     )
     games = ("games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules "
@@ -684,8 +784,12 @@ def matchup_query(
         "COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) "
         "SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, "
         "CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, "
-        f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank, r.teams_ranked, r.opp_games "
+        f"r.avg_{s.key}_allowed AS opp_avg_{s.key}_allowed, r.allowed_rank, r.teams_ranked, r.opp_games, "
+        "p.roster_status, i.report_status, i.report_primary_injury "
         "FROM players p LEFT JOIN target t ON t.team = p.team "
+        "LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status, "
+        "MAX(report_primary_injury) AS report_primary_injury FROM NFLVERSE.injuries "
+        f"WHERE season = {season} GROUP BY gsis_id, week) i ON i.gsis_id = p.player_id AND i.week = t.week "
         "LEFT JOIN games g ON g.team = p.team AND g.week = t.week "
         "LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position "
         "ORDER BY p.player",
@@ -838,11 +942,12 @@ def _big_plays(t: _Rows) -> list[str]:
 
 def _touchdowns(t: _Rows) -> list[str]:
     rec, rush = t.col("receiving_tds"), t.col("rushing_tds")
+    passing = t.col("passing_tds") if "passing_tds" in t.headers else [0] * len(rec)
     td_points, ppr = _total(t.col("td_points")), _total(t.col(t.points))
     rz, team_rz = _total(t.col("rz_targets")), _total(t.col("team_rz_targets"))
-    weeks = [w for w, a, b in zip(t.text("week"), rec, rush) if (a or 0) + (b or 0) > 0]
+    weeks = [w for w, a, b, c in zip(t.text("week"), rec, rush, passing) if (a or 0) + (b or 0) + (c or 0) > 0]
     return [
-        f"{_fmt(_total(rec) + _total(rush))} touchdowns = {_fmt(td_points)} of {_fmt(ppr)} {t.scoring.label} points "
+        f"{_fmt(_total(rec) + _total(rush) + _total(passing))} touchdowns = {_fmt(td_points)} of {_fmt(ppr)} {t.scoring.label} points "
         f"({_fmt(_pct(td_points, ppr))}%). Scored in weeks: {', '.join(weeks) or 'none'}.",
         f"{_fmt(rz)} of the team's {_fmt(team_rz)} red-zone targets ({_fmt(_pct(rz, team_rz))}%); "
         f"{_fmt(_total(t.col('rz_carries')))} red-zone carries.",
@@ -1046,6 +1151,11 @@ _SUMMARIES = {
     "Touchdowns and red zone": _touchdowns,
     "Matchups": _matchups,
     "Team usage": _team_usage,
+    "Points per game": lambda t: [
+        f"{n} ({pos}): {_fmt(g)} games, {_fmt(pt)} passing and {_fmt(rt)} rushing touchdowns, "
+        f"{_fmt(v)} {t.scoring.label} points per game." for n, pos, g, pt, rt, v in zip(
+            t.text("player_display_name"), t.text("position"), t.col("games"), t.col("passing_tds"),
+            t.col("rushing_tds"), t.col(f"{t.scoring.key}_per_game"))],
     "Depth chart": _depth,
     "Last-name lookup": _last_names,
     "Games without the player": _without,
@@ -1059,7 +1169,8 @@ _SUMMARIES = {
 
 # --- Rule-based ratings: the fallback when a factor agent's model call fails ---
 
-RATED_FACTORS = (*WHY_FACTORS, "Team usage", "Depth chart", "Games without the player", *COMPARE_FACTORS)
+RATED_FACTORS = (*WHY_FACTORS, "Team usage", "Points per game", "Depth chart", "Games without the player",
+                 *COMPARE_FACTORS)
 
 
 def _grade(value: float | None, strong: float, moderate: float, weak: float) -> str:
@@ -1137,6 +1248,9 @@ def rule_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -
     if factor == "Team usage":
         top = max((x for x in t.col("recent_target_share_pct") if x is not None), default=None)
         return _grade(top, 20, 15, 0.1), f"highest recent target share {_fmt(top)}% (strong >= 20, moderate >= 15)"
+    if factor == "Points per game":
+        ppg = (t.col(f"{t.scoring.key}_per_game") or [None])[0]
+        return _grade(ppg, 18, START_PPR, 6), f"{_fmt(ppg)} {label} points per game (strong >= 18, moderate >= {_fmt(START_PPR)}, weak >= 6)"
     if factor == "Depth chart":
         return ("moderate" if len(rows) >= 2 else "weak"), f"{len(rows)} players listed on the depth chart"
     if factor == "Next matchup":
@@ -1203,7 +1317,7 @@ PPG_MARGIN = 0.5  # points per game closer than this are level (compare_verdict,
 
 # A sentence ends at . ! or ? before a capital or "(", but not after "Sr." / "Jr." or a
 # numbered-list marker (": 1." / ", 2." as in "Depth order: 1. Mike Evans, 2. ...").
-SENTENCE_BREAK = re.compile(r"(?<!\bSr\.)(?<!\bJr\.)(?<!: \d\.)(?<!, \d\.)(?<!, \d\d\.)(?<=[.!?])\s+(?=[A-Z(])")
+SENTENCE_BREAK = re.compile(r"(?<!\bSr\.)(?<!\bJr\.)(?<!\bSt\.)(?<!\b[A-Z]\.)(?<!: \d\.)(?<!, \d\.)(?<!, \d\d\.)(?<=[.!?])\s+(?=[A-Z(])")
 
 
 def sentences(text: str) -> list[str]:
@@ -1254,11 +1368,15 @@ def _per_game(t: _Rows, i: int, when: str) -> str:
 
 
 def _usage(player: Player | str, results, column: str) -> float | None:
+    """The player's value in the Team usage rows (a QB's in his Points per game row)."""
     wanted = player if isinstance(player, str) else player.name
-    t = _Rows(*results.get("Team usage", ([], [])))
-    for name, value in zip(t.text("player_display_name"), t.col(column)):
-        if same_player(name, wanted):
-            return value
+    for factor in ("Team usage", "Points per game"):
+        t = _Rows(*results.get(factor, ([], [])))
+        if column not in t.headers:
+            continue
+        for name, value in zip(t.text("player_display_name"), t.col(column)):
+            if same_player(name, wanted):
+                return value
     return None
 
 
@@ -1301,20 +1419,40 @@ def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[li
 
 def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], list[list]]]) -> tuple[str, str]:
     """(verdict, why): start the player with more points per game in the league's scoring;
-    within 0.5 points, the one scoring more in the later weeks (Recent trend)."""
+    within 0.5 points, the one scoring more in the later weeks (Recent trend). With three or
+    more players, every one is ranked ("Start A over B and C"). A player on bye, Out or on
+    reserve cannot score; when none can play, the verdict says so."""
     usage = results.get("Team usage share", ([], []))
     label = _scoring(results).label
     ppg = _per_game_by_player(usage) if usage[1] else {}
     late = h2h_values("Recent trend", *results["Recent trend"]) if results.get("Recent trend", ([], []))[1] else {}
     names = [_row_name(p.name, ppg) for p in players]
+    away = unavailable(results)
+    off = {n: next(r for x, r in away.items() if same_player(n, x)) for n in names
+           if any(same_player(n, x) for x in away)}
+    able = [n for n in names if n not in off]
+    if not able:
+        reasons = "; ".join(f"{n} {r}" for n, r in off.items())
+        return f"Sit {' and '.join(names)}: neither plays", f"Rule: {reasons}. Decided by availability."
+    if off:
+        why_off = "; ".join(f"{n} {r}" for n, r in off.items())
+        if len(able) == 1:
+            return (f"Start {able[0]} over {' and '.join(off)}", f"Rule: {why_off}. Decided by availability.")
+        verdict, why = compare_verdict([p for p in players if _row_name(p.name, ppg) in able], results)
+        return f"{verdict} and {' and '.join(off)}", f"Rule: {why_off}. {why}"
+    if len(names) > 2:
+        ranked = sorted(names, key=lambda n: -(ppg.get(n) if ppg.get(n) is not None else -1))
+        top, second = ranked[0], ranked[1]
+        if ppg.get(top) is not None and ppg.get(second) is not None and ppg[top] - ppg[second] < 0.5:
+            lt, ls = late.get(_row_name(top, late)), late.get(_row_name(second, late))
+            if (ls or 0) > (lt or 0):
+                ranked[0], ranked[1] = second, top
+        listing = ", ".join(f"{n} {_fmt(ppg.get(n))}" for n in ranked)
+        return (f"Start {ranked[0]} over {' and '.join(ranked[1:])}",
+                f"Rule: start the player with the most {label} points per game: {listing}. Decided by points per game.")
     (a, b) = names[:2]
     pa, pb = ppg.get(a), ppg.get(b)
     decided_by = "points per game"
-    byes = on_bye(results)
-    off = [n for n in (a, b) if any(same_player(n, x) for x in byes)]
-    if len(off) == 1:  # a player on bye cannot score: start the other
-        start, bench = (b, a) if off[0] == a else (a, b)
-        return f"Start {start} over {bench}", f"Rule: {bench} is on bye in week {byes[off[0]]}. Decided by the bye."
     if pa is None or pb is None or abs(pa - pb) < 0.5:
         la, lb = late.get(_row_name(a, late)), late.get(_row_name(b, late))
         start, bench = (a, b) if (la or 0) >= (lb or 0) else (b, a)
@@ -1336,11 +1474,35 @@ def matchup_label(rank: float | None, teams: float | None = 32) -> str | None:
     return "favorable" if r <= 10 else "neutral" if r <= 22 else "tough"
 
 
+UNAVAILABLE_ROSTER = {"RES": "is on reserve (RES)", "CUT": "is not on a roster (CUT)", "SUS": "is suspended (SUS)"}
+
+
+def unavailable(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
+    """{player: why he cannot play} in the matchup week: on bye, listed Out, or on reserve
+    (QA run: Monangai, Out in week 7, and Adams, RES, both got "Start")."""
+    t = _Rows(*results.get("Next matchup", ([], [])))
+    out = {name: f"is on bye in week {week}" for name, week in on_bye(results).items()}
+    statuses = zip(t.text("player"), t.text("game_week"), t.text("report_status"), t.text("report_primary_injury"),
+                   t.text("roster_status"))
+    for name, week, report, injury, roster in statuses:
+        if name in out:
+            continue
+        if report and report.lower() == "out":
+            out[name] = f"is listed Out for week {week}" + (f" ({injury.lower()})" if injury else "")
+        elif roster in UNAVAILABLE_ROSTER:
+            out[name] = UNAVAILABLE_ROSTER[roster]
+    return out
+
+
 def on_bye(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
     """{player: week} for each player on bye in the matchup week."""
     t = _Rows(*results.get("Next matchup", ([], [])))
     return {name: week for name, week, opp in zip(t.text("player"), t.text("game_week"), t.text("opponent"))
             if week and not opp}
+
+
+def _week(results: dict[str, tuple[list[str], list[list]]]) -> str:
+    return (_Rows(*results.get("Next matchup", ([], []))).text("game_week") or ["the next"])[0]
 
 
 def matchup_lines(results: dict[str, tuple[list[str], list[list]]]) -> str:
@@ -1367,7 +1529,7 @@ def _row_name(name: str, by_name: dict[str, Any]) -> str:
 def rule_verdict(
     question_type: str, player: Player, results: dict[str, tuple[list[str], list[list]]],
     ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (), out: bool = False,
-    players: list[Player] | None = None,
+    players: list[Player] | None = None, question: str = "",
 ) -> tuple[str, str]:
     """(verdict, why) from fixed rules; ranked is (factor, support, summary), most supported first.
 
@@ -1382,6 +1544,14 @@ def rule_verdict(
     if ruled_out:
         why += f" Not supported: {', '.join(ruled_out)}."
 
+    if question_type == "unsupported":
+        topic = unsupported_topic(question) or "this question"
+        if players and len(players) >= 2:
+            verdict, rule = compare_verdict(players, results)
+            verdict = f"{unsupported_message(topic)} For week {_week(results)} only: {verdict[:1].lower()}{verdict[1:]}"
+            return verdict, _with_matchup(f"{why} {rule}", results)
+        verdict, why = rule_verdict("start_sit", player, results, ranked)
+        return f"{unsupported_message(topic)} For week {_week(results)} only: {verdict[:1].lower()}{verdict[1:]}", why
     if question_type == "compare" and players and len(players) >= 2:
         verdict, rule = compare_verdict(players, results)
         why += f" {rule}"
@@ -1393,13 +1563,23 @@ def rule_verdict(
     elif question_type == "start_sit":
         s = _scoring(results)
         ppr = _usage(player, results, f"{s.key}_per_game")
-        bye = on_bye(results)
-        if bye:
+        away = next((r for n, r in unavailable(results).items() if same_player(n, player.name)), None)
+        if away:
             verdict = f"Sit {player.name}"
-            why += f" Rule: he is on bye in week {next(iter(bye.values()))}."
+            why += f" Rule: he {away}."
         else:
             verdict = f"{'Start' if ppr is not None and ppr >= START_PPR else 'Sit'} {player.name}"
             why += f" Rule: start at {_fmt(START_PPR)}+ {s.label} per game; he averages {_fmt(ppr)}."
+        why = _with_matchup(why, results)
+    elif question_type == "waiver" and DROP_CUE.search(question or ""):
+        # "Should I drop Dalton Kincaid?": keep or drop, never "Pick up" (QA run).
+        s = _scoring(results)
+        share = _usage(player, results, "recent_target_share_pct")
+        ppr = _usage(player, results, f"{s.key}_per_game")
+        keep = (share is not None and share >= PICKUP_SHARE) or (ppr is not None and ppr >= START_PPR)
+        verdict = f"{'Keep' if keep else 'Drop'} {player.name}"
+        why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share or {_fmt(START_PPR)}+ {s.label} per game; "
+                f"his are {_fmt(share)}% and {_fmt(ppr)}.")
         why = _with_matchup(why, results)
     elif question_type == "waiver":
         share = _usage(player, results, "recent_target_share_pct")
@@ -1409,6 +1589,11 @@ def rule_verdict(
             verdict = f"{'Pick up' if share is not None and share >= PICKUP_SHARE else 'Hold off on'} {player.name}"
         why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; his is {_fmt(share)}%."
         why = _with_matchup(why, results)
-    else:
+    elif question_type == "why":
         verdict = f"Hold {player.name}"
+    else:
+        # An unrecognised question never gets "Hold <player>" (QA run): say what can be answered.
+        verdict = f"No call on {player.name}"
+        why = (f"I can't tell which decision this asks about; ask whether to start, sit, pick up or drop "
+               f"{player.name}. {why}")
     return verdict, why

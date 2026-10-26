@@ -54,12 +54,12 @@ question named. Judge depth chart order only by the depth chart facts: the playe
 right after an injured starter is the one next in line. Reply {"issues": []} if the
 answer holds up."""
 
-ACTIONS = ("hold off on", "pick up", "add", "start", "sit", "bench", "hold", "drop", "stash")
+ACTIONS = ("hold off on", "pick up", "add", "start", "sit", "bench", "hold", "drop", "stash", "keep")
 # Actions that commit a lineup spot or a roster move; these must follow the usage numbers.
 CONFIDENT_ACTIONS = ("start", "pick up", "add")
 QUESTION_ACTIONS = {
     "start_sit": ("start", "sit", "bench"),
-    "waiver": ("pick up", "add", "hold off on", "stash", "drop"),
+    "waiver": ("pick up", "add", "hold off on", "stash", "drop", "keep"),
     "compare": ("start",),
 }
 # A number on its own: not part of a word like "49ers" or "WR1".
@@ -387,6 +387,10 @@ def check_question_fit(result: AnalystResult) -> list[Issue]:
             return [Issue("question_fit", "answer", verdict,
                           f"The verdict recommends {subject}, the player who is out.")]
     elif qt in QUESTION_ACTIONS:
+        if qt == "waiver" and _action(first) == "hold" and "(already on your roster)" in first:
+            return []  # the rule-based verdict for a rostered player (QA run: looped 3 rounds)
+        if qt == "compare" and _action(first) == "sit" and "neither plays" in first:
+            return []  # every player is on bye, Out or on reserve
         if _action(first) not in QUESTION_ACTIONS[qt]:
             allowed = ", ".join(a.capitalize() for a in QUESTION_ACTIONS[qt])
             return [Issue("question_fit", "answer", first,
@@ -642,18 +646,21 @@ def check_compare(result: AnalystResult) -> list[Issue]:
     if result.question_type != "compare" or len(result.players) < 2:
         return []
     verdict = verdict_sentence(result.answer) or ""
-    names = [p.name for p in result.players[:2]]
+    if _action(verdict) == "sit" and "neither plays" in verdict:
+        return []
+    names = [p.name for p in result.players]
     started = recommended_name(verdict) if _action(verdict) == "start" else None
     pick = next((n for n in names if started and _named(n, started)), None)
     if pick is None:
         return [Issue("compare", "answer", verdict or result.answer,
-                      f"The verdict must start exactly one of {names[0]} and {names[1]}: \"Start <one> over <the other>\".")]
-    other = next(n for n in names if n != pick)
-    if re.search(rf"\b(?:start|play)\s+(?:both|{re.escape(name_key(other).split()[-1])})\b", _plain(verdict), re.I) \
-            or re.search(r"\bstart\s+both\b", _plain(result.answer), re.I):
-        return [Issue("compare", "answer", verdict, f"The verdict starts both players; start only one, {pick} or {other}.")]
+                      f"The verdict must start exactly one of {' and '.join(names)}: \"Start <one> over <the other>\".")]
+    others = [n for n in names if n != pick]
+    if any(re.search(rf"\b(?:start|play)\s+(?:both|{re.escape(name_key(o).split()[-1])})\b", _plain(verdict), re.I)
+           for o in others) or re.search(r"\bstart\s+both\b", _plain(result.answer), re.I):
+        return [Issue("compare", "answer", verdict, f"The verdict starts both players; start only one, {pick} or {others[0]}.")]
     issues = []
-    issues += _compare_numbers(result, pick, other)
+    for other in others:
+        issues += _compare_numbers(result, pick, other)
     issues += _quotes_both(result, names)
     return issues
 

@@ -46,6 +46,7 @@ load_env()  # .env first, so the default below never overrides it
 os.environ.setdefault("SAMPLE_MODE", "true")
 
 from app import pipeline, trace  # noqa: E402
+from app.adapters import meterless  # noqa: E402
 from app.agents import memory  # noqa: E402
 from app.agents.analyst import AnalystError, NeedsClarification  # noqa: E402
 from app.pipeline import PipelineResult  # noqa: E402
@@ -242,8 +243,7 @@ def _timings(lines: list[dict[str, Any]], seconds: float) -> dict[str, Any]:
 
 def health() -> dict[str, Any]:
     sample = os.environ.get("SAMPLE_MODE", "").strip().lower() in ("1", "true", "yes")
-    configured = all(os.environ.get(k) for k in ("METERLESS_BASE_URL", "METERLESS_RUNTIME_TOKEN", "METERLESS_MODEL"))
-    return {"status": "ok", "sample_mode": sample, "model_configured": configured}
+    return {"status": "ok", "sample_mode": sample, "model_configured": meterless.configured()}
 
 
 ROUTES = "Routes: POST /run, GET /trace/<run_id>, GET /health."

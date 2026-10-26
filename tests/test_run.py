@@ -159,7 +159,8 @@ def test_unanswerable_question_is_a_422(server, model):
     all_fail(model)
     status, body = call(server, "/run", {"question": "Who is the best kicker in history?"})
     assert status == 422 and body["error"] == "could_not_answer"
-    assert "Could not find the NFL player" in body["message"] and body["run_id"]
+    # QA run: a kicker question got "Name the player in full"; it is out of scope.
+    assert body["message"] == "I cover QB, RB, WR and TE only, not kickers or defenses." and body["run_id"]
 
 
 def test_unexpected_errors_never_leak_a_stack_trace(server, model, monkeypatch):

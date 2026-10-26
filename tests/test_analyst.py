@@ -663,7 +663,8 @@ def test_a_player_on_bye_gets_the_hard_rule_and_the_critic_blocks_a_start(real_s
 
     script(model, classify("Josh Allen", "start_sit"), answer=verdict("Start Josh Allen", "He is the QB1."))
     result = analyze(ALLEN)
-    assert [q.factor for q in result.queries if q.factor] == ["Player lookup", "Status", "Depth chart", "Next matchup"]
+    assert [q.factor for q in result.queries if q.factor] == ["Player lookup", "Status", "Points per game", "Depth chart",
+                                                             "Next matchup"]
     [call] = calls_for(model, analyst.VERDICT_PROMPT)
     assert "- He is on bye in week 7: Sit Josh Allen." in call[1]["content"]
     assert "Josh Allen is on bye in week 7: no game." in call[1]["content"]

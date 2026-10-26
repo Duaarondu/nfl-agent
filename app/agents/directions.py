@@ -339,7 +339,10 @@ def contradictions(text: str, d: Directions, favours: str | None = None) -> list
     if ELLIPSIS.search(text):
         problems.append("it is unfinished (an ellipsis)")
     for sentence, clause in _clauses(text):
-        problems += _pairs(clause) + _from_to(clause) + _trend_words(clause, d) + _matchup_words(sentence, clause, d)
+        # The compare rule's own tie-break ("more PPR points per game (19.8 vs 19.8); they are
+        # within 0.5, so the later weeks decide") is not a direction claim (QA run).
+        tie = "within 0.5" in sentence and "later weeks decide" in sentence
+        problems += ([] if tie else _pairs(clause)) + _from_to(clause) + _trend_words(clause, d) + _matchup_words(sentence, clause, d)
         problems += _ranking(sentence, clause, d) + _label_words(sentence, clause, d)
     return list(dict.fromkeys(problems))
 

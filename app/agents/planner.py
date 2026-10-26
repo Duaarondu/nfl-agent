@@ -60,6 +60,7 @@ def plan(run_id: str, question: str) -> Route:
         question_type = reply["question_type"]
         if question_type == "replacement" and factor_queries.is_pickup_question(question):
             question_type = "waiver"  # "Should I pick up Deebo Samuel?" is not about who replaces him
+        question_type = corrected_type(question, question_type)
         route = Route(name or (names[0] if names else None), question_type, "model",
                       names if question_type == "compare" else ())
         if dropped or question_type != reply["question_type"]:
@@ -71,6 +72,20 @@ def plan(run_id: str, question: str) -> Route:
     trace(run_id, AGENT_NAME, "handoff", "ok", target_agent="analyst", player_name=route.player_name,
           player_names=list(route.player_names), question_type=route.question_type, classified_by=route.by)
     return route
+
+
+def corrected_type(question: str, question_type: str) -> str:
+    """The code's cues win over the model's type where they are certain (QA run): a trade,
+    FAAB or streaming question is unsupported; "is X startable" is start/sit, not other;
+    "Should I drop X?" is a keep/drop (waiver) question."""
+    if factor_queries.unsupported_topic(question):
+        return "unsupported"
+    if question_type == "other":
+        guess = factor_queries.guess_question_type(question)
+        return guess if guess in ("start_sit", "waiver") else question_type
+    if question_type == "start_sit" and factor_queries.DROP_CUE.search(question):
+        return "waiver"
+    return question_type
 
 
 def named_in(name: str, question: str) -> bool:
