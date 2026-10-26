@@ -196,8 +196,8 @@ The reply, shortened from the saved live run in `examples/i-have-jameson-william
 
 ```json
 {
-  "run_id": "2d2fcbc02978",
-  "answer": "Start George Pickens over Jameson Williams. ... Pickens owns a 21.9% target share and 8.7 targets per game, producing 10.9 half-PPR points, and faces a PHI defense that allows 31.8 half-PPR points per game to WRs (rank 3), far more favorable than Williams' matchup against GB (26 allowed, rank 17). ...",
+  "run_id": "bd5fd37b4a94",
+  "answer": "Start George Pickens over Jameson Williams. George Pickens leads in weekly opportunity (8.7 vs 5.8 targets per game) and average target share (21.9% vs 15.2%), which are the strongest factors. He also has a superior matchup this week, facing PHI (31.8 half-PPR allowed, rank 3) while Jameson Williams faces GB (26 allowed, rank 17). ...",
   "disclaimer": "Informational only, based on nflverse data; not betting advice.",
   "approved": true,
   "answer_before_critic": "...",
@@ -208,12 +208,13 @@ The reply, shortened from the saved live run in `examples/i-have-jameson-william
   "factors": [{"factor": "Weekly opportunity", "support": "strong", "favours": "George Pickens",
                "rated_by": "model", "summary": "...", "evidence": [{"sql": "SELECT ...", "headers": [], "rows": []}]}],
   "claims": [{"text": "...", "evidence": []}],
-  "critic": {"approved": true, "rounds": [{"round": 1, "status": "approved", "reviewed_by": "model", "issues": []}]},
-  "memory": {"user_id": "demo", "remembered": true, "scoring": "half", "scoring_label": "half-PPR", "teams": 12, "roster": []},
+  "critic": {"approved": true, "rounds": [{"round": 1, "status": "needs_revision", "reviewed_by": "model", "issues": ["..."]},
+                                       {"round": 2, "status": "approved", "reviewed_by": "model", "issues": ["..."]}]},
+  "memory": {"user_id": "demo", "remembered": true, "scoring": "half", "scoring_label": "half-PPR", "teams": 12, "roster": [{"name": "George Kittle", "team": "SF", "position": "TE"}, "..."]},
   "steps": {"planner": "model", "memory_mining": "code",
             "factors": {"Weekly opportunity": "model", "Recent trend": "model"},
-            "first_verdict": "model", "final_verdict": "model", "critic_reviews": ["model"]},
-  "timings": {"total_ms": 128669, "agent_busy_ms": {"planner": 5449, "analyst": 41740, "factor_agent": 90503, "critic": 57807}}
+            "first_verdict": "model", "final_verdict": "model", "critic_reviews": ["model", "model"]},
+  "timings": {"total_ms": 74685, "agent_busy_ms": {"planner": 1822, "analyst": 53288, "factor_agent": 7152, "critic": 14426}}
 }
 ```
 
@@ -281,13 +282,13 @@ Live runs saved by `scripts/try_pipeline.py --live`. Each folder has `answer.md`
 
 | Example | Data | Model vs rule-based steps | Result |
 |---|---|---|---|
-| [Why is Christian Watson scoring so many fantasy points?](examples/why-is-christian-watson-scoring-so-many-fantasy-points-this/20261025-162014-c86443db3074/answer.md) | live Zetaris | planner, 6/6 factors, final verdict: model; first verdict, critic reviews: rules | 2 critic rounds, approved; 349.9s |
-| [Who becomes the Bucs' WR1 if Mike Evans is out?](examples/who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-171146-c8005cf773a5/answer.md) (wrong premise) | live Zetaris | planner, 3/3 factors, verdict: model; critic review: rules | Corrects TB to SF; "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle." 148.4s |
-| [Half-PPR league memory (c1)](examples/12-team-half-ppr-my-te-is-george-kittle-and-my-wr-is-davante/20261025-171545-737f52e76684/answer.md): "12-team half-PPR, my TE is George Kittle…" | live Zetaris | planner, 2/3 factors: model; Team usage, verdict, critic review: rules | Skips rostered Kittle; picks up Christian McCaffrey (22.8%), 18 half-PPR points per game. 238.5s |
-| [Half-PPR league memory (c2)](examples/should-i-pick-up-a-49ers-receiver-if-evans-misses-time/20261025-171850-c6bfcb00aeb7/answer.md): "Should I pick up a 49ers receiver if Evans misses time?" | live Zetaris | planner, 3/3 factors: model; verdict, critic review: rules | Treated as a replacement question; picks up McCaffrey, not Evans. 184.9s |
-| [Who should I start Trey Mcbride or Bowers for week 7](examples/who-should-i-start-trey-mcbride-or-bowers-for-week-7/20261025-193807-e7adc890c23c/answer.md) (last name only) | live Zetaris | every step: model | Resolves "Bowers = Brock Bowers, LV TE" and compares; week 7 matchups (McBride vs DEN, rank 15 of 32; Bowers vs LA, rank 31). Round 1 blocks "Start Trey McBride" (17.2 vs 20.6 PPR per game); round 2 approves "Start Brock Bowers over Trey McBride". 153.6s |
-| [Jameson Williams vs George Pickens](examples/i-have-jameson-williams-on-my-bench-and-george-pickens-in-my/20261025-180054-2d2fcbc02978/answer.md) | live Zetaris | every step: model | "Start George Pickens over Jameson Williams", half-PPR, both stored as rostered. 1 round, 128.7s |
-| [Critic demo](examples/critic-demo-who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-125256-5cfacb69069d/answer.md) (**starts from a saved Analyst answer**, not a fresh run) | saved query rows from the Oct 22 run | the Analyst is not rerun; critic reviews and revised verdict: rules (model calls fell back) | Round 1 blocks "Start Deebo Samuel" (11.1% target share vs Kittle's 24.9%) and two copied `[strong]` labels; round 2 approves "Pick up George Kittle". 170.8s |
+| [Why is Christian Watson scoring so many fantasy points?](examples/why-is-christian-watson-scoring-so-many-fantasy-points-this/20261025-222450-fa9106baf4ee/answer.md) | live Zetaris | planner, 6/6 factors, final verdict, critic reviews: model; first verdict: rules (verdict call failed at 60s) | Round 1 blocks three overstated claims; round 2 approves: 19.8 PPR points per game, inflated by weeks 1-3 (23.1 per game, 25.8% target share) and down to 16.5 in weeks 4-6 (18.6%). Note: the Touchdowns factor card says "20% of his targets are red zone targets"; it is 20% of GB's red-zone targets (7 of 35). The final answer states it correctly. 134.8s |
+| [Who becomes the Bucs' WR1 if Mike Evans is out?](examples/who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-222542-1b1452e42db5/answer.md) (wrong premise) | live Zetaris | every step: model | Corrects TB to SF; "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle." 2 rounds, 51.6s |
+| [Half-PPR league memory (c1)](examples/12-team-half-ppr-my-te-is-george-kittle-and-my-wr-is-davante/20261025-222610-ad669548f7c3/answer.md): "12-team half-PPR, my TE is George Kittle…" | live Zetaris | every step: model | Skips rostered Kittle; picks up Christian McCaffrey (22.8%). 1 round, 28.1s |
+| [Half-PPR league memory (c2)](examples/should-i-pick-up-a-49ers-receiver-if-evans-misses-time/20261025-222628-afedf66887d9/answer.md): "Should I pick up a 49ers receiver if Evans misses time?" | live Zetaris | every step: model | Uses the stored league (half-PPR, Kittle rostered); picks up McCaffrey, not Evans. 1 round, 17.9s |
+| [Who should I start Trey Mcbride or Bowers for week 7](examples/who-should-i-start-trey-mcbride-or-bowers-for-week-7/20261025-222827-76a8e6f7a7f6/answer.md) (last name only) | live Zetaris | every step: model | Resolves "Bowers = Brock Bowers, LV TE". Round 1 blocks a "higher target volume edge" for Bowers (McBride has 65 targets to 43); round 2 approves "Start Brock Bowers over Trey McBride" (20.6 vs 17.2 PPR per game), noting McBride's more favorable matchup (DEN, rank 15 of 32, vs LA, rank 31). 43.4s |
+| [Jameson Williams vs George Pickens](examples/i-have-jameson-williams-on-my-bench-and-george-pickens-in-my/20261025-222743-bd5fd37b4a94/answer.md) | live Zetaris | every step: model | Same league as c1/c2 (half-PPR). "Start George Pickens over Jameson Williams": 8.7 vs 5.8 targets per game; PHI (rank 3, favorable) vs GB (rank 17). 2 rounds, 74.7s |
+| [Critic demo](examples/critic-demo-who-becomes-the-bucs-wr1-if-mike-evans-is-out/20261025-222901-19b0e0886ff8/answer.md) (**starts from a saved Analyst answer**, not a fresh run) | saved query rows from the Oct 22 run | the Analyst is not rerun; critic reviews and revised verdict: model | Round 1 blocks "Start Deebo Samuel" (11.1% target share vs Kittle's 24.9%) and two copied support labels; round 2 approves "pick up George Kittle". Note: "next highest target recipient on the depth chart" is loose: Kittle has the next-highest target share, and Samuel is next on the depth chart. 34.3s |
 
 "Rules" means the model call for that step failed or timed out and the code rules
 answered; each `answer.md` lists this at the top.
@@ -377,20 +378,27 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 
 - **Model speed depends on the Nightshift version.** Every request sends
   `chat_template_kwargs.enable_thinking=false`.
-  - **Nightshift 1.2.7 forwards it.** In the reruns of the examples on 25 October 2026,
-    planner calls took 0.3-0.4s (was 3.5-27.1s), factor calls 0.4-1.5s (was 10.6-60s),
-    and the critic's model review 2-34s (was 57.8s, or a timeout at 90s). Runs took
-    33.9-151.0s (was 128.7-349.9s).
+  - **Nightshift 1.2.7 forwards it.** In the final reruns of the examples (25 October
+    2026), planner calls took 0.3-2.5s (was 3.5-27.1s), factor calls 0.5-4.0s (was
+    10.6-60s), and the critic's model review 2.6-22.7s (was 57.8s, or a timeout at 90s).
+    Runs took 17.9-134.8s (was 128.7-349.9s).
   - **Nightshift 1.2.1 still works, but is slower.** It ignores the flag, so Nemotron
     reasons before every reply (about 10-90s a call), and more steps hit their time
     limit and fall back to the code rules.
-- **The verdict revision is still slow.** When the Critic sends an answer back, the
-  revision call (the previous answer plus the critic's issues) still makes Nemotron
-  reason before replying, even with the flag: 5,900-8,400 completion tokens for a reply
-  of about 300 characters, 42-97s. In 4 of 6 reruns it hit its 90s limit or came back
-  empty, and the code rules wrote the final verdict.
-- **Run time.** A run takes about 0.5-2.5 minutes on Nightshift 1.2.7; most of the
-  longer runs are the revision call. The run budget is 360s.
+- **Model calls sometimes stall.** The revision call now gets the facts plus the
+  critic's rules (not the previous answer); in the final reruns it took 0.8-15.6s. In
+  the smoke tests it still hit its 65s limit twice, and one first-verdict call in the
+  Watson example failed at 60s. Each time the code rules wrote that verdict, labelled,
+  and after one review timeout later rounds use the code checks only.
+- **Run time.** A run takes about 0.3-2.5 minutes on Nightshift 1.2.7; the longer runs
+  are a stalled model call (see above). The run budget is 360s.
+- **A failed data query can leave a run unresolved.** The live cluster sometimes
+  answers a query with `HTTP 400 TTransportException`; the adapter retries once, then
+  the factor is marked "Query failed; no data". In a smoke test ("Should I pick up
+  Deebo Samuel?", half-PPR) the matchup query failed this way, the model then made up
+  a matchup figure ("29.6 ... rank 8") and opened with "Hold" instead of a waiver verb;
+  the Critic blocked both in every round, so the run ended unresolved with that note.
+  The same question in PPR, with the query working, was approved.
 - **Snapshot data.** The data is a weekly snapshot (through week 6), not a live feed.
 - **No league import.** The agent knows your league only from what you type into your
   questions.

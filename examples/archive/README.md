@@ -20,3 +20,27 @@ vs rule-based (runs from before that header was added do not).
   McBride/Bowers rerun (full name for Bowers). It reached the same verdict in 79.2s, but
   two factor summaries had numbers the Critic could not find in the rows (3.4, 0.4), so
   the run of the question as written is the one kept.
+
+### Replaced on 25 October 2026 by the rerun-4 examples (`20261025-22*`)
+
+Rerun 4 is the first set run on the final code (matchup labels, bye rule, suffix-aware
+names, review-timeout skip). Every run below was replaced for the reason given.
+
+| Run | Batch | Reason |
+|---|---|---|
+| `why-is-christian-watson-.../20261025-162014-c86443db3074` | previous README example | 349.9s; first verdict and both critic reviews fell back to rules. |
+| `who-becomes-the-bucs-.../20261025-171146-c8005cf773a5` | previous README example | Same verdict (Kittle), but the critic review fell back to rules; 148.4s. |
+| `12-team-half-ppr-.../20261025-171545-737f52e76684` | previous README example | Rule-based verdict and rule-based critic review (model calls failed); 238.5s. |
+| `should-i-pick-up-a-49ers-.../20261025-171850-c6bfcb00aeb7` | previous README example | Rule-based verdict and critic review; 184.9s. |
+| `who-should-i-start-trey-mcbride-.../20261025-193807-e7adc890c23c` | previous README example | Same verdict (Bowers), 153.6s; predates the matchup labels. |
+| `i-have-jameson-williams-.../20261025-180054-2d2fcbc02978` | previous README example | Same verdict (Pickens), 128.7s; predates the matchup labels. |
+| `critic-demo-.../20261025-125256-5cfacb69069d` | previous README example | Critic reviews and revised verdict fell back to rules; 170.8s. |
+| `*/20261025-1947*` to `*/20261025-1957*` (7 runs) | rerun 1 | First rerun after the critic fixes; e.g. league c1 answered "start George Kittle over Davante Adams" (off-question) before round 2 fixed it. Code changed after. |
+| `*/20261025-2041*` to `*/20261025-2049*` (7 runs) | rerun 2 | Before the polarity-aware direction check and hard-rule fallback; e.g. league c1's first draft picked up Deebo Samuel (11.1%) over McCaffrey (22.8%). |
+| `why-is-christian-watson-.../20261025-210527-a412694d9720` | rerun 3 | Approved, but predates the matchup labels and number-in-rows check. |
+| `who-becomes-the-bucs-.../20261025-210626-1da9ef0b113f` | rerun 3 | Approved (Kittle); predates the final code. |
+| `12-team-half-ppr-.../20261025-210849-cb521191f693` | rerun 3 | Approved (McCaffrey); predates the final code. |
+| `should-i-pick-up-a-49ers-.../20261025-211011-7afb9aeb5276` | rerun 3 | Approved (McCaffrey); predates the final code. |
+| `i-have-jameson-williams-.../20261025-211041-d4aafb841110` | rerun 3 | Approved (Pickens); predates the final code. |
+| `who-should-i-start-trey-mcbride-.../20261025-211220-aa7c55b91bec` | rerun 3 | Approved with a wrong claim: a "target volume edge" for Bowers (McBride had 65 targets to 43). |
+| `critic-demo-.../20261025-211259-82453ba2c4ac` | rerun 3 | Approved with a wrong depth-chart claim about Kittle. |

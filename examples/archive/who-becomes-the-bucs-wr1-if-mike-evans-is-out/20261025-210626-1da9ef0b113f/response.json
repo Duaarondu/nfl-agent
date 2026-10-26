@@ -1,0 +1,671 @@
+{
+  "run_id": "1da9ef0b113f",
+  "question": "Who becomes the Bucs' WR1 if Mike Evans is out?",
+  "answer": "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle. Team usage data shows George Kittle with a 24.9% target share, making him the highest-targeted player after Mike Evans and the top fantasy replacement if Evans is out. Depth chart succession lists Deebo Samuel as next in line at WR1, but the target share numbers directly support Kittle as the primary replacement target.\n\nInformational only, based on nflverse data; not betting advice.",
+  "disclaimer": "Informational only, based on nflverse data; not betting advice.",
+  "approved": true,
+  "answer_before_critic": "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle. Mike Evans has the highest target share at 27.1%, making him the 49ers' WR1 if healthy; if Mike Evans is out, George Kittle's 24.9% target share ranks him as the highest-targeted player and the next highest usage option overall.",
+  "premise_correction": "Mike Evans is on SF in the data (rosters, week 7), not TB.",
+  "question_type": "replacement",
+  "player": {
+    "name": "Mike Evans",
+    "team": "SF",
+    "position": "WR"
+  },
+  "players": [],
+  "name_note": null,
+  "season_context": "Season context: current season 2026; the latest week with stats is week 6. \"This season\" means season 2026.",
+  "factors": [
+    {
+      "factor": "Team usage",
+      "support": "strong",
+      "summary": "Mike Evans has the highest target share at 27.1%, making him the 49ers' WR1 if healthy; if Mike Evans is out, George Kittle's 24.9% target share ranks him as the highest-targeted player and the next highest usage option overall.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": null,
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT player_display_name, position, COUNT(*) AS games, SUM(targets) AS targets, ROUND(100 * AVG(target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(CASE WHEN week >= 5 THEN target_share END), 1) AS recent_target_share_pct, SUM(carries) AS carries, ROUND(AVG(fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats WHERE season = 2026 AND team = 'SF' AND position IN ('RB', 'WR', 'TE') GROUP BY player_display_name, position ORDER BY targets DESC LIMIT 12",
+          "headers": [
+            "player_display_name",
+            "position",
+            "games",
+            "targets",
+            "avg_target_share_pct",
+            "recent_target_share_pct",
+            "carries",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Mike Evans",
+              "WR",
+              "6",
+              "39",
+              "23.3",
+              "27.1",
+              "0",
+              "14.8"
+            ],
+            [
+              "George Kittle",
+              "TE",
+              "6",
+              "36",
+              "21.9",
+              "24.9",
+              "0",
+              "15.0"
+            ],
+            [
+              "Christian McCaffrey",
+              "RB",
+              "6",
+              "35",
+              "20.8",
+              "22.8",
+              "77",
+              "20.3"
+            ],
+            [
+              "Deebo Samuel Sr.",
+              "WR",
+              "5",
+              "20",
+              "14.3",
+              "11.1",
+              "9",
+              "12.1"
+            ],
+            [
+              "Demarcus Robinson",
+              "WR",
+              "2",
+              "6",
+              "11.6",
+              null,
+              "0",
+              "9.7"
+            ],
+            [
+              "Brandin Cooks",
+              "WR",
+              "3",
+              "5",
+              "5.9",
+              "7.2",
+              "0",
+              "3.3"
+            ],
+            [
+              "Jacob Cowing",
+              "WR",
+              "6",
+              "5",
+              "3.1",
+              "3.7",
+              "1",
+              "0.4"
+            ],
+            [
+              "Luke Farrell",
+              "TE",
+              "6",
+              "4",
+              "2.2",
+              "1.9",
+              "0",
+              "0.7"
+            ],
+            [
+              "Jordan Watkins",
+              "WR",
+              "2",
+              "3",
+              "5.6",
+              "3.4",
+              "0",
+              "5.6"
+            ],
+            [
+              "Kaelon Black",
+              "RB",
+              "6",
+              "3",
+              "1.7",
+              "1.7",
+              "45",
+              "3.3"
+            ],
+            [
+              "KhaDarel Hodge",
+              "WR",
+              "3",
+              "1",
+              "1.6",
+              null,
+              "0",
+              "0.9"
+            ],
+            [
+              "Brayden Willis",
+              "TE",
+              "4",
+              "0",
+              "0.0",
+              "0.0",
+              "0",
+              "0.0"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Depth chart",
+      "support": "strong",
+      "summary": "Mike Evans is the WR1 on the depth chart; if he is out, Deebo Samuel becomes the 49ers' WR1 per the depth chart order.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": null,
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT DISTINCT pos_abb, pos_rank, player_name FROM NFLVERSE.depth_charts WHERE team = 'SF' AND pos_abb = 'WR' AND dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = 'SF') ORDER BY pos_rank LIMIT 25",
+          "headers": [
+            "pos_abb",
+            "pos_rank",
+            "player_name"
+          ],
+          "rows": [
+            [
+              "WR",
+              "1",
+              "Mike Evans"
+            ],
+            [
+              "WR",
+              "2",
+              "Deebo Samuel"
+            ],
+            [
+              "WR",
+              "3",
+              "Brandin Cooks"
+            ],
+            [
+              "WR",
+              "4",
+              "Jordan Watkins"
+            ],
+            [
+              "WR",
+              "5",
+              "Jacob Cowing"
+            ],
+            [
+              "WR",
+              "6",
+              "Christian Kirk"
+            ],
+            [
+              "WR",
+              "7",
+              "Demarcus Robinson"
+            ],
+            [
+              "WR",
+              "8",
+              "De'Zhaun Stribling"
+            ],
+            [
+              "WR",
+              "9",
+              "Ricky Pearsall"
+            ],
+            [
+              "WR",
+              "10",
+              "Brandon Aiyuk"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Games without the player",
+      "support": "not supported",
+      "summary": "Query failed; no data.",
+      "rated_by": "rule-based",
+      "rule": "no rows",
+      "favours": null,
+      "evidence": []
+    }
+  ],
+  "claims": [
+    {
+      "text": "Mike Evans: SF, WR, roster status ACT (week 7).",
+      "evidence": [
+        {
+          "query_id": 1,
+          "sql": "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND LOWER(full_name) IN ('mike evans', 'who becomes', 'becomes the', 'the bucs', 'bucs wr', 'wr if', 'if mike', 'evans is', 'is out', 'who becomes the', 'becomes the bucs', 'the bucs wr', 'bucs wr if', 'wr if mike', 'if mike evans', 'mike evans is', 'evans is out') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+          "headers": [
+            "gsis_id",
+            "full_name",
+            "team",
+            "position",
+            "status",
+            "week"
+          ],
+          "rows": [
+            [
+              "00-0031408",
+              "Mike Evans",
+              "SF",
+              "WR",
+              "ACT",
+              "7"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Latest injury report: week 7, no game status; Did Not Participate In Practice.",
+      "evidence": [
+        {
+          "query_id": 2,
+          "sql": "SELECT week, report_status, report_primary_injury, practice_status FROM NFLVERSE.injuries WHERE season = 2026 AND gsis_id = '00-0031408' ORDER BY week",
+          "headers": [
+            "week",
+            "report_status",
+            "report_primary_injury",
+            "practice_status"
+          ],
+          "rows": [
+            [
+              "3",
+              "Questionable",
+              "Hip",
+              "Limited Participation in Practice"
+            ],
+            [
+              "4",
+              "Questionable",
+              "Ribs",
+              "Limited Participation in Practice"
+            ],
+            [
+              "5",
+              null,
+              null,
+              "Limited Participation in Practice"
+            ],
+            [
+              "6",
+              "Questionable",
+              "Ribs",
+              "Did Not Participate In Practice"
+            ],
+            [
+              "7",
+              null,
+              null,
+              "Did Not Participate In Practice"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Mike Evans has the highest target share at 27.1%, making him the 49ers' WR1 if healthy; if Mike Evans is out, George Kittle's 24.9% target share ranks him as the highest-targeted player and the next highest usage option overall.",
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT player_display_name, position, COUNT(*) AS games, SUM(targets) AS targets, ROUND(100 * AVG(target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(CASE WHEN week >= 5 THEN target_share END), 1) AS recent_target_share_pct, SUM(carries) AS carries, ROUND(AVG(fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats WHERE season = 2026 AND team = 'SF' AND position IN ('RB', 'WR', 'TE') GROUP BY player_display_name, position ORDER BY targets DESC LIMIT 12",
+          "headers": [
+            "player_display_name",
+            "position",
+            "games",
+            "targets",
+            "avg_target_share_pct",
+            "recent_target_share_pct",
+            "carries",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Mike Evans",
+              "WR",
+              "6",
+              "39",
+              "23.3",
+              "27.1",
+              "0",
+              "14.8"
+            ],
+            [
+              "George Kittle",
+              "TE",
+              "6",
+              "36",
+              "21.9",
+              "24.9",
+              "0",
+              "15.0"
+            ],
+            [
+              "Christian McCaffrey",
+              "RB",
+              "6",
+              "35",
+              "20.8",
+              "22.8",
+              "77",
+              "20.3"
+            ],
+            [
+              "Deebo Samuel Sr.",
+              "WR",
+              "5",
+              "20",
+              "14.3",
+              "11.1",
+              "9",
+              "12.1"
+            ],
+            [
+              "Demarcus Robinson",
+              "WR",
+              "2",
+              "6",
+              "11.6",
+              null,
+              "0",
+              "9.7"
+            ],
+            [
+              "Brandin Cooks",
+              "WR",
+              "3",
+              "5",
+              "5.9",
+              "7.2",
+              "0",
+              "3.3"
+            ],
+            [
+              "Jacob Cowing",
+              "WR",
+              "6",
+              "5",
+              "3.1",
+              "3.7",
+              "1",
+              "0.4"
+            ],
+            [
+              "Luke Farrell",
+              "TE",
+              "6",
+              "4",
+              "2.2",
+              "1.9",
+              "0",
+              "0.7"
+            ],
+            [
+              "Jordan Watkins",
+              "WR",
+              "2",
+              "3",
+              "5.6",
+              "3.4",
+              "0",
+              "5.6"
+            ],
+            [
+              "Kaelon Black",
+              "RB",
+              "6",
+              "3",
+              "1.7",
+              "1.7",
+              "45",
+              "3.3"
+            ],
+            [
+              "KhaDarel Hodge",
+              "WR",
+              "3",
+              "1",
+              "1.6",
+              null,
+              "0",
+              "0.9"
+            ],
+            [
+              "Brayden Willis",
+              "TE",
+              "4",
+              "0",
+              "0.0",
+              "0.0",
+              "0",
+              "0.0"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Mike Evans is the WR1 on the depth chart; if he is out, Deebo Samuel becomes the 49ers' WR1 per the depth chart order.",
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT DISTINCT pos_abb, pos_rank, player_name FROM NFLVERSE.depth_charts WHERE team = 'SF' AND pos_abb = 'WR' AND dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = 'SF') ORDER BY pos_rank LIMIT 25",
+          "headers": [
+            "pos_abb",
+            "pos_rank",
+            "player_name"
+          ],
+          "rows": [
+            [
+              "WR",
+              "1",
+              "Mike Evans"
+            ],
+            [
+              "WR",
+              "2",
+              "Deebo Samuel"
+            ],
+            [
+              "WR",
+              "3",
+              "Brandin Cooks"
+            ],
+            [
+              "WR",
+              "4",
+              "Jordan Watkins"
+            ],
+            [
+              "WR",
+              "5",
+              "Jacob Cowing"
+            ],
+            [
+              "WR",
+              "6",
+              "Christian Kirk"
+            ],
+            [
+              "WR",
+              "7",
+              "Demarcus Robinson"
+            ],
+            [
+              "WR",
+              "8",
+              "De'Zhaun Stribling"
+            ],
+            [
+              "WR",
+              "9",
+              "Ricky Pearsall"
+            ],
+            [
+              "WR",
+              "10",
+              "Brandon Aiyuk"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "not_measurable": [
+    "Route participation and alignment",
+    "Coverage faced and quality of the cornerbacks",
+    "Coaching intent and play-calling plans",
+    "Injury severity beyond the official report"
+  ],
+  "critic": {
+    "approved": true,
+    "rounds": [
+      {
+        "round": 1,
+        "status": "needs_revision",
+        "reviewed_by": "model",
+        "answer": "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle. Mike Evans has the highest target share at 27.1%, making him the 49ers' WR1 if healthy; if Mike Evans is out, George Kittle's 24.9% target share ranks him as the highest-targeted player and the next highest usage option overall.",
+        "issues": [
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "George Kittle's 24.9% target share ranks him as the highest-targeted player and the next highest usage option overall.",
+            "reason": "Depth chart facts list Mike Evans as WR1 and Deebo Samuel as WR2. If Evans is out, Deebo Samuel is next in line per the depth chart order. The target share facts show George Kittle at 24.9%, but he is a TE and is listed WR10 on the WR depth chart, so he is not the natural WR1 replacement based on depth chart succession.",
+            "blocking": true
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "status": "approved",
+        "reviewed_by": "model",
+        "answer": "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle. Team usage data shows George Kittle with a 24.9% target share, making him the highest-targeted player after Mike Evans and the top fantasy replacement if Evans is out. Depth chart succession lists Deebo Samuel as next in line at WR1, but the target share numbers directly support Kittle as the primary replacement target.",
+        "issues": [
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Deebo Samuel moves up to WR1 is correct.",
+            "reason": "Depth chart: Mike Evans (WR1), 2. Deebo Samuel (WR2). If Evans is out, Deebo Samuel is next in line per depth chart succession.",
+            "blocking": false
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle.",
+            "reason": "Depth chart order lists Deebo Samuel (WR2) as the next after Mike Evans (WR1). Target share rank: Mike Evans 27.1%, George Kittle 24.9%, Christian McCaffrey 22.8%, Deebo Samuel 11.1%. Depth chart succession overrides target share for the WR1 replacement.",
+            "blocking": false
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "George Kittle with a 24.9% target share, making him the highest-targeted player after Mike Evans and the top fantasy replacement if Evans is out.",
+            "reason": "Depth chart: Deebo Samuel is WR2, listed before George Kittle (WR10). If Mike Evans is out, Deebo Samuel is next in line per depth chart succession; George Kittle is not the natural WR1 replacement based on depth chart order.",
+            "blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "memory": {
+    "user_id": "rr3-bucs",
+    "remembered": false,
+    "scoring": "ppr",
+    "scoring_label": "PPR",
+    "teams": null,
+    "roster": [],
+    "memory_ids": [],
+    "context": "",
+    "stored_this_run": []
+  },
+  "steps": {
+    "planner": "model",
+    "memory_mining": "code",
+    "factors": {
+      "Team usage": "model",
+      "Depth chart": "model",
+      "Games without the player": "rule-based"
+    },
+    "first_verdict": "model",
+    "final_verdict": "model",
+    "critic_reviews": [
+      "model",
+      "model"
+    ]
+  },
+  "timings": {
+    "total_ms": 58592,
+    "memory_ms": 1,
+    "agent_busy_ms": {
+      "planner": 3084,
+      "analyst": 14300,
+      "factor_agent": 1903,
+      "critic": 40212
+    },
+    "model_calls": [
+      {
+        "agent": "planner",
+        "step": "classify",
+        "status": "ok",
+        "duration_ms": 3084,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Depth chart",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 925,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Team usage",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 978,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "verdict",
+        "status": "ok",
+        "duration_ms": 961,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 23956,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "revise",
+        "status": "ok",
+        "duration_ms": 1612,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 16256,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      }
+    ]
+  }
+}

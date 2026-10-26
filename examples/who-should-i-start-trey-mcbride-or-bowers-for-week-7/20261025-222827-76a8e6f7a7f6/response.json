@@ -1,0 +1,860 @@
+{
+  "run_id": "76a8e6f7a7f6",
+  "question": "Who should I start Trey Mcbride or Bowers for week 7",
+  "answer": "Start Brock Bowers over Trey McBride. Bowers = Brock Bowers, LV TE. Brock Bowers has higher seasonal PPR points per game (20.6 vs 17.2) and a stronger recent weekly trend (18.2 vs 14.7 in weeks 4-6), giving him a consistent production edge despite Trey McBride's more favorable week 7 matchup against a Denver defense allowing 13.2 PPR points to TEs and lower touchdown dependency. The overall scoring advantage for Bowers outweighs the matchup and dependency factors.\n\nInformational only, based on nflverse data; not betting advice.",
+  "disclaimer": "Informational only, based on nflverse data; not betting advice.",
+  "approved": true,
+  "answer_before_critic": "Start Brock Bowers over Trey McBride. Bowers = Brock Bowers, LV TE. Brock Bowers leads in PPR points per game (20.6 vs 17.2) and recent weekly production (18.2 vs 14.7), outweighing Trey McBride's edge in touchdown share (17.5% vs 21.9%) and matchup difficulty (DEN rank 15 vs LA rank 31). Bowers's stronger seasonal consistency and higher target volume edge decide the start.",
+  "premise_correction": null,
+  "question_type": "compare",
+  "player": {
+    "name": "Trey McBride",
+    "team": "ARI",
+    "position": "TE"
+  },
+  "players": [
+    {
+      "name": "Trey McBride",
+      "team": "ARI",
+      "position": "TE"
+    },
+    {
+      "name": "Brock Bowers",
+      "team": "LV",
+      "position": "TE"
+    }
+  ],
+  "name_note": "Bowers = Brock Bowers, LV TE.",
+  "season_context": "Season context: current season 2026; the latest week with stats is week 6. \"This season\" means season 2026.",
+  "factors": [
+    {
+      "factor": "Team usage share",
+      "support": "strong",
+      "summary": "Trey McBride has a 29.7% average target share compared to Brock Bowers's 29.3%, making this factor level per the code rule.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": "Trey McBride",
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG(ps.fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "team",
+            "games",
+            "targets",
+            "avg_target_share_pct",
+            "avg_air_yards_share_pct",
+            "carries",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "LV",
+              "4",
+              "43",
+              "29.3",
+              "33.9",
+              "0",
+              "20.6"
+            ],
+            [
+              "Trey McBride",
+              "ARI",
+              "6",
+              "65",
+              "29.7",
+              "23.8",
+              "0",
+              "17.2"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Recent trend",
+      "support": "strong",
+      "summary": "Brock Bowers averaged 18.2 PPR points per game in later weeks compared to Trey McBride's 14.7, making Bowers the stronger start based on recent trend.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": "Brock Bowers",
+      "evidence": [
+        {
+          "query_id": 5,
+          "sql": "SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN ps.fantasy_points_ppr END), 1) AS early_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN ps.fantasy_points_ppr END), 1) AS late_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "split_week",
+            "early_games",
+            "late_games",
+            "early_ppr_per_game",
+            "late_ppr_per_game",
+            "early_target_share_pct",
+            "late_target_share_pct"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "1",
+              "3",
+              "27.6",
+              "18.2",
+              "43.3",
+              "24.6"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "3",
+              "3",
+              "19.7",
+              "14.7",
+              "31.9",
+              "27.5"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Touchdown share",
+      "support": "strong",
+      "summary": "Trey McBride has 17.5% of his PPR points from touchdowns compared to Brock Bowers's 21.9%, making McBride less touchdown-dependent and steadier.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": "Trey McBride",
+      "evidence": [
+        {
+          "query_id": 6,
+          "sql": "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, 6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, ROUND(SUM(ps.fantasy_points_ppr), 1) AS ppr_points, ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM(ps.fantasy_points_ppr), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "touchdowns",
+            "td_points",
+            "ppr_points",
+            "td_share_pct"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "18",
+              "82.2",
+              "21.9"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "18",
+              "103.1",
+              "17.5"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Next matchup",
+      "support": "strong",
+      "summary": "Trey McBride faces DEN allowing 13.2 PPR points per game to TEs (rank 15), while Brock Bowers faces LA allowing 8.3 (rank 31), making McBride's matchup easier.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": "Trey McBride",
+      "evidence": [
+        {
+          "query_id": 7,
+          "sql": "WITH players AS (SELECT '00-0037744' AS player_id, 'Trey McBride' AS player, 'ARI' AS team, 'TE' AS position UNION ALL SELECT '00-0039338' AS player_id, 'Brock Bowers' AS player, 'LV' AS team, 'TE' AS position), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT DISTINCT team, 7 AS week FROM players), allowed AS (SELECT opponent_team, position, week, SUM(fantasy_points_ppr) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_ppr_allowed AS opp_avg_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+          "headers": [
+            "player",
+            "team",
+            "position",
+            "game_week",
+            "opponent",
+            "played",
+            "opp_avg_ppr_allowed",
+            "allowed_rank",
+            "teams_ranked",
+            "opp_games"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "LV",
+              "TE",
+              "7",
+              "LA",
+              "0",
+              "8.3",
+              "31",
+              "32",
+              "6"
+            ],
+            [
+              "Trey McBride",
+              "ARI",
+              "TE",
+              "7",
+              "DEN",
+              "0",
+              "13.2",
+              "15",
+              "32",
+              "6"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Weekly opportunity",
+      "support": "weak",
+      "summary": "Both players have identical 10.8 targets per game, but Trey McBride has a higher average snap share (90.5% vs 82.2%) and a slightly higher average target share (29.7% vs 29.3%), while Brock Bowers has a higher average PPR points per game (20.6 vs 17.2).",
+      "rated_by": "model",
+      "rule": null,
+      "favours": "Trey McBride",
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND(ps.fantasy_points_ppr, 1) AS ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') ORDER BY ps.player_display_name, ps.week",
+          "headers": [
+            "player",
+            "week",
+            "opponent_team",
+            "snap_pct",
+            "targets",
+            "target_share_pct",
+            "receptions",
+            "carries",
+            "ppr_points"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "NO",
+              "79.0",
+              "13",
+              "43.3",
+              "10",
+              "0",
+              "27.6"
+            ],
+            [
+              "Brock Bowers",
+              "4",
+              "KC",
+              "82.0",
+              "11",
+              "22.9",
+              "6",
+              "0",
+              "20.6"
+            ],
+            [
+              "Brock Bowers",
+              "5",
+              "NE",
+              "70.0",
+              "10",
+              "27.8",
+              "8",
+              "0",
+              "23.0"
+            ],
+            [
+              "Brock Bowers",
+              "6",
+              "BUF",
+              "98.0",
+              "9",
+              "23.1",
+              "4",
+              "0",
+              "11.0"
+            ],
+            [
+              "Trey McBride",
+              "1",
+              "LAC",
+              "80.0",
+              "13",
+              "35.1",
+              "9",
+              "0",
+              "24.5"
+            ],
+            [
+              "Trey McBride",
+              "2",
+              "SEA",
+              "88.0",
+              "10",
+              "38.5",
+              "8",
+              "0",
+              "18.1"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "SF",
+              "91.0",
+              "11",
+              "22.0",
+              "9",
+              "0",
+              "16.5"
+            ],
+            [
+              "Trey McBride",
+              "4",
+              "NYG",
+              "97.0",
+              "12",
+              "34.3",
+              "7",
+              "0",
+              "10.1"
+            ],
+            [
+              "Trey McBride",
+              "5",
+              "DET",
+              "90.0",
+              "10",
+              "21.7",
+              "9",
+              "0",
+              "21.6"
+            ],
+            [
+              "Trey McBride",
+              "6",
+              "LA",
+              "97.0",
+              "9",
+              "26.5",
+              "7",
+              "0",
+              "12.3"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "text": "Trey McBride: ARI, TE, roster status ACT (week 7).",
+      "evidence": [
+        {
+          "query_id": 1,
+          "sql": "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND REGEXP_REPLACE(LOWER(full_name), ' (jr|sr|ii|iii|iv)[.]?$', '') IN ('trey mcbride', 'who should', 'should i', 'i start', 'start trey', 'mcbride or', 'or bowers', 'bowers for', 'for week', 'who should i', 'should i start', 'i start trey', 'start trey mcbride', 'trey mcbride or', 'mcbride or bowers', 'or bowers for', 'bowers for week') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+          "headers": [
+            "gsis_id",
+            "full_name",
+            "team",
+            "position",
+            "status",
+            "week"
+          ],
+          "rows": [
+            [
+              "00-0037744",
+              "Trey McBride",
+              "ARI",
+              "TE",
+              "ACT",
+              "7"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Brock Bowers: LV, TE, 82.2 PPR points this season.",
+      "evidence": [
+        {
+          "query_id": 2,
+          "sql": "WITH latest AS (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND position IN ('QB', 'RB', 'WR', 'TE') AND (LOWER(full_name) LIKE '% bowers' OR LOWER(full_name) LIKE '% bowers %') GROUP BY gsis_id), pts AS (SELECT player_id, ROUND(SUM(fantasy_points_ppr), 1) AS season_points FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY player_id) SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week, p.season_points AS season_ppr_points FROM NFLVERSE.rosters r JOIN latest l ON r.gsis_id = l.gsis_id AND r.week = l.week LEFT JOIN pts p ON p.player_id = r.gsis_id WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+          "headers": [
+            "gsis_id",
+            "full_name",
+            "team",
+            "position",
+            "status",
+            "week",
+            "season_ppr_points"
+          ],
+          "rows": [
+            [
+              "00-0039338",
+              "Brock Bowers",
+              "LV",
+              "TE",
+              "ACT",
+              "7",
+              "82.2"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Trey McBride has a 29.7% average target share compared to Brock Bowers's 29.3%, making this factor level per the code rule.",
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG(ps.fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "team",
+            "games",
+            "targets",
+            "avg_target_share_pct",
+            "avg_air_yards_share_pct",
+            "carries",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "LV",
+              "4",
+              "43",
+              "29.3",
+              "33.9",
+              "0",
+              "20.6"
+            ],
+            [
+              "Trey McBride",
+              "ARI",
+              "6",
+              "65",
+              "29.7",
+              "23.8",
+              "0",
+              "17.2"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Brock Bowers averaged 18.2 PPR points per game in later weeks compared to Trey McBride's 14.7, making Bowers the stronger start based on recent trend.",
+      "evidence": [
+        {
+          "query_id": 5,
+          "sql": "SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN ps.fantasy_points_ppr END), 1) AS early_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN ps.fantasy_points_ppr END), 1) AS late_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "split_week",
+            "early_games",
+            "late_games",
+            "early_ppr_per_game",
+            "late_ppr_per_game",
+            "early_target_share_pct",
+            "late_target_share_pct"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "1",
+              "3",
+              "27.6",
+              "18.2",
+              "43.3",
+              "24.6"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "3",
+              "3",
+              "19.7",
+              "14.7",
+              "31.9",
+              "27.5"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Trey McBride has 17.5% of his PPR points from touchdowns compared to Brock Bowers's 21.9%, making McBride less touchdown-dependent and steadier.",
+      "evidence": [
+        {
+          "query_id": 6,
+          "sql": "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, 6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, ROUND(SUM(ps.fantasy_points_ppr), 1) AS ppr_points, ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM(ps.fantasy_points_ppr), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+          "headers": [
+            "player",
+            "touchdowns",
+            "td_points",
+            "ppr_points",
+            "td_share_pct"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "18",
+              "82.2",
+              "21.9"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "18",
+              "103.1",
+              "17.5"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Trey McBride faces DEN allowing 13.2 PPR points per game to TEs (rank 15), while Brock Bowers faces LA allowing 8.3 (rank 31), making McBride's matchup easier.",
+      "evidence": [
+        {
+          "query_id": 7,
+          "sql": "WITH players AS (SELECT '00-0037744' AS player_id, 'Trey McBride' AS player, 'ARI' AS team, 'TE' AS position UNION ALL SELECT '00-0039338' AS player_id, 'Brock Bowers' AS player, 'LV' AS team, 'TE' AS position), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT DISTINCT team, 7 AS week FROM players), allowed AS (SELECT opponent_team, position, week, SUM(fantasy_points_ppr) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_ppr_allowed AS opp_avg_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+          "headers": [
+            "player",
+            "team",
+            "position",
+            "game_week",
+            "opponent",
+            "played",
+            "opp_avg_ppr_allowed",
+            "allowed_rank",
+            "teams_ranked",
+            "opp_games"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "LV",
+              "TE",
+              "7",
+              "LA",
+              "0",
+              "8.3",
+              "31",
+              "32",
+              "6"
+            ],
+            [
+              "Trey McBride",
+              "ARI",
+              "TE",
+              "7",
+              "DEN",
+              "0",
+              "13.2",
+              "15",
+              "32",
+              "6"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Both players have identical 10.8 targets per game, but Trey McBride has a higher average snap share (90.5% vs 82.2%) and a slightly higher average target share (29.7% vs 29.3%), while Brock Bowers has a higher average PPR points per game (20.6 vs 17.2).",
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND(ps.fantasy_points_ppr, 1) AS ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0037744', '00-0039338') ORDER BY ps.player_display_name, ps.week",
+          "headers": [
+            "player",
+            "week",
+            "opponent_team",
+            "snap_pct",
+            "targets",
+            "target_share_pct",
+            "receptions",
+            "carries",
+            "ppr_points"
+          ],
+          "rows": [
+            [
+              "Brock Bowers",
+              "3",
+              "NO",
+              "79.0",
+              "13",
+              "43.3",
+              "10",
+              "0",
+              "27.6"
+            ],
+            [
+              "Brock Bowers",
+              "4",
+              "KC",
+              "82.0",
+              "11",
+              "22.9",
+              "6",
+              "0",
+              "20.6"
+            ],
+            [
+              "Brock Bowers",
+              "5",
+              "NE",
+              "70.0",
+              "10",
+              "27.8",
+              "8",
+              "0",
+              "23.0"
+            ],
+            [
+              "Brock Bowers",
+              "6",
+              "BUF",
+              "98.0",
+              "9",
+              "23.1",
+              "4",
+              "0",
+              "11.0"
+            ],
+            [
+              "Trey McBride",
+              "1",
+              "LAC",
+              "80.0",
+              "13",
+              "35.1",
+              "9",
+              "0",
+              "24.5"
+            ],
+            [
+              "Trey McBride",
+              "2",
+              "SEA",
+              "88.0",
+              "10",
+              "38.5",
+              "8",
+              "0",
+              "18.1"
+            ],
+            [
+              "Trey McBride",
+              "3",
+              "SF",
+              "91.0",
+              "11",
+              "22.0",
+              "9",
+              "0",
+              "16.5"
+            ],
+            [
+              "Trey McBride",
+              "4",
+              "NYG",
+              "97.0",
+              "12",
+              "34.3",
+              "7",
+              "0",
+              "10.1"
+            ],
+            [
+              "Trey McBride",
+              "5",
+              "DET",
+              "90.0",
+              "10",
+              "21.7",
+              "9",
+              "0",
+              "21.6"
+            ],
+            [
+              "Trey McBride",
+              "6",
+              "LA",
+              "97.0",
+              "9",
+              "26.5",
+              "7",
+              "0",
+              "12.3"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "not_measurable": [
+    "Route participation and alignment",
+    "Coverage faced and quality of the cornerbacks",
+    "Coaching intent and play-calling plans",
+    "Injury severity beyond the official report"
+  ],
+  "critic": {
+    "approved": true,
+    "rounds": [
+      {
+        "round": 1,
+        "status": "needs_revision",
+        "reviewed_by": "model",
+        "review_note": "",
+        "answer": "Start Brock Bowers over Trey McBride. Bowers = Brock Bowers, LV TE. Brock Bowers leads in PPR points per game (20.6 vs 17.2) and recent weekly production (18.2 vs 14.7), outweighing Trey McBride's edge in touchdown share (17.5% vs 21.9%) and matchup difficulty (DEN rank 15 vs LA rank 31). Bowers's stronger seasonal consistency and higher target volume edge decide the start.",
+        "issues": [
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Brock Bowers leads in PPR points per game (20.6 vs 17.2) and recent weekly production (18.2 vs 14.7), outweighing Trey McBride's edge in touchdown share (17.5% vs 21.9%) and matchup difficulty (DEN rank 15 vs LA rank 31).",
+            "reason": "The facts show Brock Bowers has higher seasonal PPR points per game (20.6 vs 17.2) and higher recent weekly points (18.2 vs 14.7 in weeks 4-6). However, Trey McBride has a more favorable week 7 matchup (DEN rank 15 allowing 13.2 PPR vs LA rank 31 allowing 8.3 PPR) and lower touchdown dependency (17.5% vs 21.9%), which the code rules favor McBride. The overall PPR production edge for Bowers is clear, but the answer's claim that it 'outweighs' both the matchup and touchdown factors is a value judgment; the facts present competing advantages without a definitive hierarchy.",
+            "blocking": true
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Bowers's stronger seasonal consistency and higher target volume edge decide the start.",
+            "reason": "The facts show Trey McBride has higher target volume (65 vs 43 targets) and higher average snap share (90.5% vs 82.2%). While Bowers has higher seasonal PPR points per game, McBride's target and snap share edge contradicts the claim of 'higher target volume edge' for Bowers.",
+            "blocking": true
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "status": "approved",
+        "reviewed_by": "model",
+        "review_note": "",
+        "answer": "Start Brock Bowers over Trey McBride. Bowers = Brock Bowers, LV TE. Brock Bowers has higher seasonal PPR points per game (20.6 vs 17.2) and a stronger recent weekly trend (18.2 vs 14.7 in weeks 4-6), giving him a consistent production edge despite Trey McBride's more favorable week 7 matchup against a Denver defense allowing 13.2 PPR points to TEs and lower touchdown dependency. The overall scoring advantage for Bowers outweighs the matchup and dependency factors.",
+        "issues": [
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Brock Bowers has higher seasonal PPR points per game (20.6 vs 17.2) and a stronger recent weekly trend (18.2 vs 14.7 in weeks 4-6), giving him a consistent production edge despite Trey McBride's more favorable week 7 matchup against a Denver defense allowing 13.2 PPR points to TEs and lower touchdown dependency. The overall scoring advantage for Bowers outweighs the matchup and dependency factors.",
+            "reason": "The facts show Trey McBride has the easier week 7 matchup (DEN rank 15, 13.2 PPR allowed) vs Brock Bowers (LA rank 31, 8.3 PPR allowed). By the code rule for next opponent's PPR points allowed per game, this factor favours Trey McBride. The answer incorrectly states McBride has the more favorable matchup but then says Bowers's advantage outweighs it; the facts indicate the matchup factor favors McBride, not Bowers. Additionally, while Bowers has higher seasonal PPR (20.6 vs 17.2) and higher recent weekly points (18.2 vs 14.7 weeks 4-6), the code rule for share of points from touchdowns favors Trey McBride (17.5% vs 21.9%, lower is steadier). The answer dismisses the touchdown dependency factor, but the facts show it favors McBride. The overall assessment that Bowers's scoring advantage outweighs the matchup and dependency factors is a value judgment; the factual data shows the matchup and touchdown dependency factors both favor McBride, which the answer does not correctly account for.",
+            "blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "memory": {
+    "user_id": "rr4-mcbride",
+    "remembered": false,
+    "scoring": "ppr",
+    "scoring_label": "PPR",
+    "teams": null,
+    "roster": [],
+    "memory_ids": [],
+    "context": "",
+    "stored_this_run": []
+  },
+  "steps": {
+    "planner": "model",
+    "memory_mining": "code",
+    "factors": {
+      "Team usage share": "model",
+      "Recent trend": "model",
+      "Touchdown share": "model",
+      "Next matchup": "model",
+      "Weekly opportunity": "model"
+    },
+    "first_verdict": "model",
+    "final_verdict": "model",
+    "critic_reviews": [
+      "model",
+      "model"
+    ]
+  },
+  "timings": {
+    "total_ms": 43428,
+    "memory_ms": 1,
+    "agent_busy_ms": {
+      "planner": 2506,
+      "analyst": 31702,
+      "factor_agent": 5194,
+      "critic": 7686
+    },
+    "model_calls": [
+      {
+        "agent": "planner",
+        "step": "classify",
+        "status": "ok",
+        "duration_ms": 2506,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Recent trend",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 791,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Touchdown share",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 957,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Team usage share",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 968,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Next matchup",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 969,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Weekly opportunity",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 1509,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "verdict",
+        "status": "ok",
+        "duration_ms": 1380,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 3526,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "revise",
+        "status": "ok",
+        "duration_ms": 15574,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 4160,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      }
+    ]
+  }
+}

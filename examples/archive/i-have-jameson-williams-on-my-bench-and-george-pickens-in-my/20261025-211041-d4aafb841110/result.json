@@ -1,0 +1,1125 @@
+{
+  "result": {
+    "run_id": "d4aafb841110",
+    "question": "I have Jameson Williams on my bench and George Pickens in my starting lineup, who should I pick?",
+    "answer": "Start George Pickens over Jameson Williams. George Pickens leads in weekly opportunity (8.7 vs 5.8 targets per game) and average target share (21.9% vs 15.2%), which are the strongest factors. He also has a superior matchup this week, facing PHI (31.8 half-PPR allowed, rank 3) while Jameson Williams faces GB (26 allowed, rank 17). Although Jameson Williams has a higher recent trend (15.5 vs 14.1 half-PPR points per game since week 4) and a higher air yards share, Pickens's consistent higher scoring output (10.9 vs 9.7 season avg) and stronger team usage make him the better start.",
+    "premise_correction": null,
+    "claims": [
+      {
+        "text": "George Pickens: DAL, WR, roster status ACT (week 7). Jameson Williams: DET, WR, roster status ACT (week 7).",
+        "evidence": [
+          {
+            "query_id": 1,
+            "sql": "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND LOWER(full_name) IN ('george pickens', 'i have', 'have jameson', 'jameson williams', 'williams on', 'on my', 'my bench', 'bench and', 'and george', 'pickens in', 'in my', 'my starting', 'starting lineup', 'lineup who', 'who should', 'should i', 'i pick', 'i have jameson', 'have jameson williams', 'jameson williams on', 'williams on my', 'on my bench', 'my bench and', 'bench and george', 'and george pickens', 'george pickens in', 'pickens in my', 'in my starting', 'my starting lineup', 'starting lineup who', 'lineup who should', 'who should i', 'should i pick') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+            "headers": [
+              "gsis_id",
+              "full_name",
+              "team",
+              "position",
+              "status",
+              "week"
+            ],
+            "rows": [
+              [
+                "00-0037247",
+                "George Pickens",
+                "DAL",
+                "WR",
+                "ACT",
+                "7"
+              ],
+              [
+                "00-0037240",
+                "Jameson Williams",
+                "DET",
+                "WR",
+                "ACT",
+                "7"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "text": "George Pickens has 8.7 targets per game versus Jameson Williams's 5.8, and a 21.9% target share versus 15.2%, while also averaging 10.9 half-PPR points per game to Williams's 9.7, despite Williams having a slightly higher 90.2% snap share.",
+        "evidence": [
+          {
+            "query_id": 2,
+            "sql": "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND((ps.fantasy_points + ps.fantasy_points_ppr) / 2, 1) AS half_ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') ORDER BY ps.player_display_name, ps.week",
+            "headers": [
+              "player",
+              "week",
+              "opponent_team",
+              "snap_pct",
+              "targets",
+              "target_share_pct",
+              "receptions",
+              "carries",
+              "half_ppr_points"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "1",
+                "NYG",
+                "84.0",
+                "6",
+                "20.0",
+                "3",
+                "0",
+                "4.3"
+              ],
+              [
+                "George Pickens",
+                "2",
+                "WAS",
+                "76.0",
+                "8",
+                "25.8",
+                "6",
+                "0",
+                "7.0"
+              ],
+              [
+                "George Pickens",
+                "3",
+                "BAL",
+                "85.0",
+                "11",
+                "27.5",
+                "7",
+                "0",
+                "11.7"
+              ],
+              [
+                "George Pickens",
+                "4",
+                "HOU",
+                "86.0",
+                "3",
+                "7.0",
+                "2",
+                "0",
+                "8.5"
+              ],
+              [
+                "George Pickens",
+                "5",
+                "TB",
+                "88.0",
+                "13",
+                "31.0",
+                "9",
+                "0",
+                "23.5"
+              ],
+              [
+                "George Pickens",
+                "6",
+                "GB",
+                "88.0",
+                "11",
+                "20.4",
+                "6",
+                "0",
+                "10.3"
+              ],
+              [
+                "Jameson Williams",
+                "1",
+                "NO",
+                "84.0",
+                "9",
+                "23.1",
+                "4",
+                "0",
+                "6.5"
+              ],
+              [
+                "Jameson Williams",
+                "2",
+                "BUF",
+                "97.0",
+                "4",
+                "10.5",
+                "2",
+                "0",
+                "4.3"
+              ],
+              [
+                "Jameson Williams",
+                "3",
+                "NYJ",
+                "82.0",
+                "4",
+                "12.9",
+                "4",
+                "0",
+                "6.9"
+              ],
+              [
+                "Jameson Williams",
+                "4",
+                "CAR",
+                "99.0",
+                "8",
+                "15.7",
+                "6",
+                "0",
+                "13.2"
+              ],
+              [
+                "Jameson Williams",
+                "5",
+                "ARI",
+                "89.0",
+                "4",
+                "13.8",
+                "2",
+                "0",
+                "17.7"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "text": "George Pickens has a higher average target share (21.9% vs 15.2%) and more total targets (52 vs 29), which favours him in this factor.",
+        "evidence": [
+          {
+            "query_id": 3,
+            "sql": "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "team",
+              "games",
+              "targets",
+              "avg_target_share_pct",
+              "avg_air_yards_share_pct",
+              "carries",
+              "half_ppr_per_game"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "DAL",
+                "6",
+                "52",
+                "21.9",
+                "31.9",
+                "0",
+                "10.9"
+              ],
+              [
+                "Jameson Williams",
+                "DET",
+                "5",
+                "29",
+                "15.2",
+                "34.1",
+                "0",
+                "9.7"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "text": "Jameson Williams averaged 15.5 half-PPR points per game from week 4 on, while George Pickens averaged 14.1, making Williams the higher-scoring option in recent weeks.",
+        "evidence": [
+          {
+            "query_id": 4,
+            "sql": "SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS early_half_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS late_half_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "split_week",
+              "early_games",
+              "late_games",
+              "early_half_ppr_per_game",
+              "late_half_ppr_per_game",
+              "early_target_share_pct",
+              "late_target_share_pct"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "3",
+                "3",
+                "3",
+                "7.7",
+                "14.1",
+                "24.4",
+                "19.4"
+              ],
+              [
+                "Jameson Williams",
+                "3",
+                "3",
+                "2",
+                "5.9",
+                "15.5",
+                "15.5",
+                "14.7"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "text": "George Pickens scores 9.2% of his half-PPR points from touchdowns (6 of 65.3) versus Jameson Williams's 24.7% (12 of 48.6), making Pickens significantly less touchdown-dependent and steadier.",
+        "evidence": [
+          {
+            "query_id": 5,
+            "sql": "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, 6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, ROUND(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_points, ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "touchdowns",
+              "td_points",
+              "half_ppr_points",
+              "td_share_pct"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "1",
+                "6",
+                "65.3",
+                "9.2"
+              ],
+              [
+                "Jameson Williams",
+                "2",
+                "12",
+                "48.6",
+                "24.7"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "text": "George Pickens faces PHI, which allows 31.8 half-PPR points per game to WRs (rank 3), while Jameson Williams faces GB, which allows 26 half-PPR points per game to WRs (rank 17).",
+        "evidence": [
+          {
+            "query_id": 6,
+            "sql": "WITH players AS (SELECT '00-0037240' AS player_id, 'Jameson Williams' AS player, 'DET' AS team, 'WR' AS position UNION ALL SELECT '00-0037247' AS player_id, 'George Pickens' AS player, 'DAL' AS team, 'WR' AS position), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT team, MIN(week) AS week FROM games WHERE week > 6 GROUP BY team), allowed AS (SELECT opponent_team, position, week, SUM((fantasy_points + fantasy_points_ppr) / 2) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_half_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_half_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_half_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_half_ppr_allowed AS opp_avg_half_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+            "headers": [
+              "player",
+              "team",
+              "position",
+              "game_week",
+              "opponent",
+              "played",
+              "opp_avg_half_ppr_allowed",
+              "allowed_rank",
+              "teams_ranked",
+              "opp_games"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "DAL",
+                "WR",
+                "7",
+                "PHI",
+                "0",
+                "31.8",
+                "3",
+                "32",
+                "6"
+              ],
+              [
+                "Jameson Williams",
+                "DET",
+                "WR",
+                "7",
+                "GB",
+                "0",
+                "26.0",
+                "17",
+                "32",
+                "6"
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "factors": [
+      {
+        "factor": "Weekly opportunity",
+        "support": "strong",
+        "summary": "George Pickens has 8.7 targets per game versus Jameson Williams's 5.8, and a 21.9% target share versus 15.2%, while also averaging 10.9 half-PPR points per game to Williams's 9.7, despite Williams having a slightly higher 90.2% snap share.",
+        "evidence": [
+          {
+            "query_id": 2,
+            "sql": "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND((ps.fantasy_points + ps.fantasy_points_ppr) / 2, 1) AS half_ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') ORDER BY ps.player_display_name, ps.week",
+            "headers": [
+              "player",
+              "week",
+              "opponent_team",
+              "snap_pct",
+              "targets",
+              "target_share_pct",
+              "receptions",
+              "carries",
+              "half_ppr_points"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "1",
+                "NYG",
+                "84.0",
+                "6",
+                "20.0",
+                "3",
+                "0",
+                "4.3"
+              ],
+              [
+                "George Pickens",
+                "2",
+                "WAS",
+                "76.0",
+                "8",
+                "25.8",
+                "6",
+                "0",
+                "7.0"
+              ],
+              [
+                "George Pickens",
+                "3",
+                "BAL",
+                "85.0",
+                "11",
+                "27.5",
+                "7",
+                "0",
+                "11.7"
+              ],
+              [
+                "George Pickens",
+                "4",
+                "HOU",
+                "86.0",
+                "3",
+                "7.0",
+                "2",
+                "0",
+                "8.5"
+              ],
+              [
+                "George Pickens",
+                "5",
+                "TB",
+                "88.0",
+                "13",
+                "31.0",
+                "9",
+                "0",
+                "23.5"
+              ],
+              [
+                "George Pickens",
+                "6",
+                "GB",
+                "88.0",
+                "11",
+                "20.4",
+                "6",
+                "0",
+                "10.3"
+              ],
+              [
+                "Jameson Williams",
+                "1",
+                "NO",
+                "84.0",
+                "9",
+                "23.1",
+                "4",
+                "0",
+                "6.5"
+              ],
+              [
+                "Jameson Williams",
+                "2",
+                "BUF",
+                "97.0",
+                "4",
+                "10.5",
+                "2",
+                "0",
+                "4.3"
+              ],
+              [
+                "Jameson Williams",
+                "3",
+                "NYJ",
+                "82.0",
+                "4",
+                "12.9",
+                "4",
+                "0",
+                "6.9"
+              ],
+              [
+                "Jameson Williams",
+                "4",
+                "CAR",
+                "99.0",
+                "8",
+                "15.7",
+                "6",
+                "0",
+                "13.2"
+              ],
+              [
+                "Jameson Williams",
+                "5",
+                "ARI",
+                "89.0",
+                "4",
+                "13.8",
+                "2",
+                "0",
+                "17.7"
+              ]
+            ]
+          }
+        ],
+        "rated_by": "model",
+        "rule": null,
+        "favours": "George Pickens"
+      },
+      {
+        "factor": "Team usage share",
+        "support": "strong",
+        "summary": "George Pickens has a higher average target share (21.9% vs 15.2%) and more total targets (52 vs 29), which favours him in this factor.",
+        "evidence": [
+          {
+            "query_id": 3,
+            "sql": "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "team",
+              "games",
+              "targets",
+              "avg_target_share_pct",
+              "avg_air_yards_share_pct",
+              "carries",
+              "half_ppr_per_game"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "DAL",
+                "6",
+                "52",
+                "21.9",
+                "31.9",
+                "0",
+                "10.9"
+              ],
+              [
+                "Jameson Williams",
+                "DET",
+                "5",
+                "29",
+                "15.2",
+                "34.1",
+                "0",
+                "9.7"
+              ]
+            ]
+          }
+        ],
+        "rated_by": "model",
+        "rule": null,
+        "favours": "George Pickens"
+      },
+      {
+        "factor": "Recent trend",
+        "support": "strong",
+        "summary": "Jameson Williams averaged 15.5 half-PPR points per game from week 4 on, while George Pickens averaged 14.1, making Williams the higher-scoring option in recent weeks.",
+        "evidence": [
+          {
+            "query_id": 4,
+            "sql": "SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS early_half_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS late_half_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "split_week",
+              "early_games",
+              "late_games",
+              "early_half_ppr_per_game",
+              "late_half_ppr_per_game",
+              "early_target_share_pct",
+              "late_target_share_pct"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "3",
+                "3",
+                "3",
+                "7.7",
+                "14.1",
+                "24.4",
+                "19.4"
+              ],
+              [
+                "Jameson Williams",
+                "3",
+                "3",
+                "2",
+                "5.9",
+                "15.5",
+                "15.5",
+                "14.7"
+              ]
+            ]
+          }
+        ],
+        "rated_by": "model",
+        "rule": null,
+        "favours": "Jameson Williams"
+      },
+      {
+        "factor": "Touchdown share",
+        "support": "strong",
+        "summary": "George Pickens scores 9.2% of his half-PPR points from touchdowns (6 of 65.3) versus Jameson Williams's 24.7% (12 of 48.6), making Pickens significantly less touchdown-dependent and steadier.",
+        "evidence": [
+          {
+            "query_id": 5,
+            "sql": "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, 6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, ROUND(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_points, ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+            "headers": [
+              "player",
+              "touchdowns",
+              "td_points",
+              "half_ppr_points",
+              "td_share_pct"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "1",
+                "6",
+                "65.3",
+                "9.2"
+              ],
+              [
+                "Jameson Williams",
+                "2",
+                "12",
+                "48.6",
+                "24.7"
+              ]
+            ]
+          }
+        ],
+        "rated_by": "model",
+        "rule": null,
+        "favours": "George Pickens"
+      },
+      {
+        "factor": "Next matchup",
+        "support": "strong",
+        "summary": "George Pickens faces PHI, which allows 31.8 half-PPR points per game to WRs (rank 3), while Jameson Williams faces GB, which allows 26 half-PPR points per game to WRs (rank 17).",
+        "evidence": [
+          {
+            "query_id": 6,
+            "sql": "WITH players AS (SELECT '00-0037240' AS player_id, 'Jameson Williams' AS player, 'DET' AS team, 'WR' AS position UNION ALL SELECT '00-0037247' AS player_id, 'George Pickens' AS player, 'DAL' AS team, 'WR' AS position), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT team, MIN(week) AS week FROM games WHERE week > 6 GROUP BY team), allowed AS (SELECT opponent_team, position, week, SUM((fantasy_points + fantasy_points_ppr) / 2) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_half_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_half_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_half_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_half_ppr_allowed AS opp_avg_half_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+            "headers": [
+              "player",
+              "team",
+              "position",
+              "game_week",
+              "opponent",
+              "played",
+              "opp_avg_half_ppr_allowed",
+              "allowed_rank",
+              "teams_ranked",
+              "opp_games"
+            ],
+            "rows": [
+              [
+                "George Pickens",
+                "DAL",
+                "WR",
+                "7",
+                "PHI",
+                "0",
+                "31.8",
+                "3",
+                "32",
+                "6"
+              ],
+              [
+                "Jameson Williams",
+                "DET",
+                "WR",
+                "7",
+                "GB",
+                "0",
+                "26.0",
+                "17",
+                "32",
+                "6"
+              ]
+            ]
+          }
+        ],
+        "rated_by": "model",
+        "rule": null,
+        "favours": "George Pickens"
+      }
+    ],
+    "not_measurable": [
+      "Route participation and alignment",
+      "Coverage faced and quality of the cornerbacks",
+      "Coaching intent and play-calling plans",
+      "Injury severity beyond the official report"
+    ],
+    "queries": [
+      {
+        "query_id": 1,
+        "purpose": "team, position and roster status",
+        "sql": "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND LOWER(full_name) IN ('george pickens', 'i have', 'have jameson', 'jameson williams', 'williams on', 'on my', 'my bench', 'bench and', 'and george', 'pickens in', 'in my', 'my starting', 'starting lineup', 'lineup who', 'who should', 'should i', 'i pick', 'i have jameson', 'have jameson williams', 'jameson williams on', 'williams on my', 'on my bench', 'my bench and', 'bench and george', 'and george pickens', 'george pickens in', 'pickens in my', 'in my starting', 'my starting lineup', 'starting lineup who', 'lineup who should', 'who should i', 'should i pick') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+        "headers": [
+          "gsis_id",
+          "full_name",
+          "team",
+          "position",
+          "status",
+          "week"
+        ],
+        "rows": [
+          [
+            "00-0037247",
+            "George Pickens",
+            "DAL",
+            "WR",
+            "ACT",
+            "7"
+          ],
+          [
+            "00-0037240",
+            "Jameson Williams",
+            "DET",
+            "WR",
+            "ACT",
+            "7"
+          ]
+        ],
+        "error": null,
+        "factor": "Player lookup"
+      },
+      {
+        "query_id": 2,
+        "purpose": "Jameson Williams vs George Pickens: snap %, targets, target share and half-PPR points by week",
+        "sql": "SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND((ps.fantasy_points + ps.fantasy_points_ppr) / 2, 1) AS half_ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') ORDER BY ps.player_display_name, ps.week",
+        "headers": [
+          "player",
+          "week",
+          "opponent_team",
+          "snap_pct",
+          "targets",
+          "target_share_pct",
+          "receptions",
+          "carries",
+          "half_ppr_points"
+        ],
+        "rows": [
+          [
+            "George Pickens",
+            "1",
+            "NYG",
+            "84.0",
+            "6",
+            "20.0",
+            "3",
+            "0",
+            "4.3"
+          ],
+          [
+            "George Pickens",
+            "2",
+            "WAS",
+            "76.0",
+            "8",
+            "25.8",
+            "6",
+            "0",
+            "7.0"
+          ],
+          [
+            "George Pickens",
+            "3",
+            "BAL",
+            "85.0",
+            "11",
+            "27.5",
+            "7",
+            "0",
+            "11.7"
+          ],
+          [
+            "George Pickens",
+            "4",
+            "HOU",
+            "86.0",
+            "3",
+            "7.0",
+            "2",
+            "0",
+            "8.5"
+          ],
+          [
+            "George Pickens",
+            "5",
+            "TB",
+            "88.0",
+            "13",
+            "31.0",
+            "9",
+            "0",
+            "23.5"
+          ],
+          [
+            "George Pickens",
+            "6",
+            "GB",
+            "88.0",
+            "11",
+            "20.4",
+            "6",
+            "0",
+            "10.3"
+          ],
+          [
+            "Jameson Williams",
+            "1",
+            "NO",
+            "84.0",
+            "9",
+            "23.1",
+            "4",
+            "0",
+            "6.5"
+          ],
+          [
+            "Jameson Williams",
+            "2",
+            "BUF",
+            "97.0",
+            "4",
+            "10.5",
+            "2",
+            "0",
+            "4.3"
+          ],
+          [
+            "Jameson Williams",
+            "3",
+            "NYJ",
+            "82.0",
+            "4",
+            "12.9",
+            "4",
+            "0",
+            "6.9"
+          ],
+          [
+            "Jameson Williams",
+            "4",
+            "CAR",
+            "99.0",
+            "8",
+            "15.7",
+            "6",
+            "0",
+            "13.2"
+          ],
+          [
+            "Jameson Williams",
+            "5",
+            "ARI",
+            "89.0",
+            "4",
+            "13.8",
+            "2",
+            "0",
+            "17.7"
+          ]
+        ],
+        "error": null,
+        "factor": "Weekly opportunity"
+      },
+      {
+        "query_id": 3,
+        "purpose": "Jameson Williams vs George Pickens: share of their team's targets and air yards, and half-PPR points per game",
+        "sql": "SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name",
+        "headers": [
+          "player",
+          "team",
+          "games",
+          "targets",
+          "avg_target_share_pct",
+          "avg_air_yards_share_pct",
+          "carries",
+          "half_ppr_per_game"
+        ],
+        "rows": [
+          [
+            "George Pickens",
+            "DAL",
+            "6",
+            "52",
+            "21.9",
+            "31.9",
+            "0",
+            "10.9"
+          ],
+          [
+            "Jameson Williams",
+            "DET",
+            "5",
+            "29",
+            "15.2",
+            "34.1",
+            "0",
+            "9.7"
+          ]
+        ],
+        "error": null,
+        "factor": "Team usage share"
+      },
+      {
+        "query_id": 4,
+        "purpose": "Jameson Williams vs George Pickens: half-PPR points per game and target share in weeks 1-3 vs 4-6",
+        "sql": "SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS early_half_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN (ps.fantasy_points + ps.fantasy_points_ppr) / 2 END), 1) AS late_half_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+        "headers": [
+          "player",
+          "split_week",
+          "early_games",
+          "late_games",
+          "early_half_ppr_per_game",
+          "late_half_ppr_per_game",
+          "early_target_share_pct",
+          "late_target_share_pct"
+        ],
+        "rows": [
+          [
+            "George Pickens",
+            "3",
+            "3",
+            "3",
+            "7.7",
+            "14.1",
+            "24.4",
+            "19.4"
+          ],
+          [
+            "Jameson Williams",
+            "3",
+            "3",
+            "2",
+            "5.9",
+            "15.5",
+            "15.5",
+            "14.7"
+          ]
+        ],
+        "error": null,
+        "factor": "Recent trend"
+      },
+      {
+        "query_id": 5,
+        "purpose": "Jameson Williams vs George Pickens: touchdowns and the share of half-PPR points that came from them",
+        "sql": "SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds) AS touchdowns, 6 * SUM(ps.receiving_tds + ps.rushing_tds) AS td_points, ROUND(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 1) AS half_ppr_points, ROUND(100 * 6 * SUM(ps.receiving_tds + ps.rushing_tds) / NULLIF(SUM((ps.fantasy_points + ps.fantasy_points_ppr) / 2), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0037240', '00-0037247') GROUP BY ps.player_display_name ORDER BY ps.player_display_name",
+        "headers": [
+          "player",
+          "touchdowns",
+          "td_points",
+          "half_ppr_points",
+          "td_share_pct"
+        ],
+        "rows": [
+          [
+            "George Pickens",
+            "1",
+            "6",
+            "65.3",
+            "9.2"
+          ],
+          [
+            "Jameson Williams",
+            "2",
+            "12",
+            "48.6",
+            "24.7"
+          ]
+        ],
+        "error": null,
+        "factor": "Touchdown share"
+      },
+      {
+        "query_id": 6,
+        "purpose": "Jameson Williams vs George Pickens: next opponent after week 6 and its average half-PPR points allowed per game to the position (rank 1 = most allowed)",
+        "sql": "WITH players AS (SELECT '00-0037240' AS player_id, 'Jameson Williams' AS player, 'DET' AS team, 'WR' AS position UNION ALL SELECT '00-0037247' AS player_id, 'George Pickens' AS player, 'DAL' AS team, 'WR' AS position), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT team, MIN(week) AS week FROM games WHERE week > 6 GROUP BY team), allowed AS (SELECT opponent_team, position, week, SUM((fantasy_points + fantasy_points_ppr) / 2) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_half_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_half_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_half_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_half_ppr_allowed AS opp_avg_half_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+        "headers": [
+          "player",
+          "team",
+          "position",
+          "game_week",
+          "opponent",
+          "played",
+          "opp_avg_half_ppr_allowed",
+          "allowed_rank",
+          "teams_ranked",
+          "opp_games"
+        ],
+        "rows": [
+          [
+            "George Pickens",
+            "DAL",
+            "WR",
+            "7",
+            "PHI",
+            "0",
+            "31.8",
+            "3",
+            "32",
+            "6"
+          ],
+          [
+            "Jameson Williams",
+            "DET",
+            "WR",
+            "7",
+            "GB",
+            "0",
+            "26.0",
+            "17",
+            "32",
+            "6"
+          ]
+        ],
+        "error": null,
+        "factor": "Next matchup"
+      }
+    ],
+    "season_context": "Season context: current season 2026; the latest week with stats is week 6. \"This season\" means season 2026.",
+    "verdict_by": "model",
+    "disclaimer": "Informational only, based on nflverse data; not betting advice.",
+    "question_type": "compare",
+    "player": {
+      "player_id": "00-0037240",
+      "name": "Jameson Williams",
+      "team": "DET",
+      "position": "WR",
+      "status": "ACT",
+      "roster_week": 7
+    },
+    "asked": "I have Jameson Williams on my bench and George Pickens in my starting lineup, who should I pick?",
+    "user_context": {
+      "user_id": "rr3-league",
+      "scoring": "half",
+      "teams": 12,
+      "roster": [
+        {
+          "player_id": "00-0033288",
+          "name": "George Kittle",
+          "team": "SF",
+          "position": "TE"
+        },
+        {
+          "player_id": "00-0031381",
+          "name": "Davante Adams",
+          "team": "LA",
+          "position": "WR"
+        },
+        {
+          "player_id": "00-0037240",
+          "name": "Jameson Williams",
+          "team": "DET",
+          "position": "WR"
+        },
+        {
+          "player_id": "00-0037247",
+          "name": "George Pickens",
+          "team": "DAL",
+          "position": "WR"
+        }
+      ],
+      "context": "[MEMORY CONTEXT]\n## fantasy\n- [WK] Jameson Williams (DET, WR) is on the user's roster. (entities: jameson williams, jameson, williams, det) <mem-399c98672fad>\n- [WK] George Pickens (DAL, WR) is on the user's roster. (entities: george pickens, george, pickens, dal) <mem-71253ec64e67>\n- [WK] George Kittle (SF, TE) is on the user's roster. (entities: george kittle, george, kittle) <mem-25565d4b07e5>\n- [WK] Davante Adams (LA, WR) is on the user's roster. (entities: davante adams, davante, adams) <mem-d3019dbd4076>\n- [WK] The user's league uses half-PPR scoring. (entities: ppr) <mem-bd85ad7d0c7b>\n- [WK] The user's league has 12 teams. <mem-4795a5bec782>\n[/MEMORY CONTEXT]",
+      "memory_ids": [
+        "mem-399c98672fad",
+        "mem-71253ec64e67",
+        "mem-25565d4b07e5",
+        "mem-d3019dbd4076",
+        "mem-bd85ad7d0c7b",
+        "mem-4795a5bec782"
+      ],
+      "remembered": true
+    },
+    "players": [
+      {
+        "player_id": "00-0037240",
+        "name": "Jameson Williams",
+        "team": "DET",
+        "position": "WR",
+        "status": "ACT",
+        "roster_week": 7
+      },
+      {
+        "player_id": "00-0037247",
+        "name": "George Pickens",
+        "team": "DAL",
+        "position": "WR",
+        "status": "ACT",
+        "roster_week": 7
+      }
+    ],
+    "name_note": null
+  },
+  "first_answer": "Start George Pickens over Jameson Williams. George Pickens leads in weekly opportunity (8.7 vs 5.8 targets per game) and average target share (21.9% vs 15.2%), which are the strongest factors. He also has a superior matchup this week, facing PHI (31.8 half-PPR allowed, rank 3) while Jameson Williams faces GB (26 allowed, rank 17). Although Jameson Williams has a higher recent trend (15.5 vs 14.1 half-PPR points per game since week 4) and a higher air yards share, Pickens's consistent higher scoring output (10.9 vs 9.7 season avg) and stronger team usage make him the better start.",
+  "critiques": [
+    {
+      "round": 1,
+      "answer": "Start George Pickens over Jameson Williams. George Pickens leads in weekly opportunity (8.7 vs 5.8 targets per game) and average target share (21.9% vs 15.2%), which are the strongest factors. He also has a superior matchup this week, facing PHI (31.8 half-PPR allowed, rank 3) while Jameson Williams faces GB (26 allowed, rank 17). Although Jameson Williams has a higher recent trend (15.5 vs 14.1 half-PPR points per game since week 4) and a higher air yards share, Pickens's consistent higher scoring output (10.9 vs 9.7 season avg) and stronger team usage make him the better start.",
+      "issues": [
+        {
+          "check": "model_review",
+          "where": "answer",
+          "claim": "Start George Pickens over Jameson Williams",
+          "reason": "George Pickens has 10.9 half-PPR points per game vs Jameson Williams's 9.7. However, Jameson Williams's recent trend (weeks 4-6 average: 15.5 ppg) is higher than George Pickens's (14.1 ppg). Additionally, Jameson Williams has a higher air yards share (34.1% vs 31.9%), and his target share decline is smaller (15.5% to 14.7% vs Pickens's 24.4% to 19.4%). The easier matchup factor also favours Jameson Williams (GB allows 26 vs PHI allows 31.8), and Williams's lower touchdown dependency risk is outweighed by his higher late-season scoring trajectory.",
+          "blocking": true,
+          "rule": null
+        }
+      ],
+      "reviewed_by": "model",
+      "status": "needs_revision"
+    },
+    {
+      "round": 2,
+      "answer": "Start George Pickens over Jameson Williams. George Pickens leads in weekly opportunity (8.7 vs 5.8 targets per game) and average target share (21.9% vs 15.2%), which are the strongest factors. He also has a superior matchup this week, facing PHI (31.8 half-PPR allowed, rank 3) while Jameson Williams faces GB (26 allowed, rank 17). Although Jameson Williams has a higher recent trend (15.5 vs 14.1 half-PPR points per game since week 4) and a higher air yards share, Pickens's consistent higher scoring output (10.9 vs 9.7 season avg) and stronger team usage make him the better start.",
+      "issues": [
+        {
+          "check": "model_review",
+          "where": "answer",
+          "claim": "Start George Pickens over Jameson Williams",
+          "reason": "George Pickens has 10.9 half-PPR points per game vs Jameson Williams's 9.7. However, Jameson Williams's recent trend (weeks 4-6 average: 15.5 ppg) is higher than George Pickens's (14.1 ppg). Additionally, Jameson Williams has a higher air yards share (34.1% vs 31.9%), and his target share decline is smaller (15.5% to 14.7% vs Pickens's 24.4% to 19.4%). The easier matchup factor also favours Jameson Williams (GB allows 26 vs PHI allows 31.8), and Williams's lower touchdown dependency risk is outweighed by his higher late-season scoring trajectory.",
+          "blocking": false,
+          "rule": null
+        }
+      ],
+      "reviewed_by": "model",
+      "status": "approved"
+    }
+  ],
+  "approved": true,
+  "seconds": 30.295641100005014
+}

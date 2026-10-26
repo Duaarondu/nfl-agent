@@ -189,10 +189,14 @@ its request count.
 
   Model steps went from 24 of 33 to 39 of 43 across the five fresh-run examples (the
   rest are rule-based fallbacks).
-- **The revision call is the exception.** The verdict revision after a critic round
-  (the previous answer plus the critic's issues) still makes Nemotron reason before
-  replying: 5,900-8,400 completion tokens for a reply of about 300 characters, 42-97s,
-  or an empty reply. The same facts without the previous answer take about 1s.
+- **Final reruns (the current examples).** Planner 0.3-2.5s, factor agents 0.5-4.0s,
+  first verdict 1.3-5.0s (one failure at 60s), critic review 2.6-22.7s, revision
+  0.8-15.6s; whole runs 17.9-134.8s.
+- **The revision call was the exception.** With the previous answer plus the critic's
+  issues, Nemotron reasoned before replying: 5,900-8,400 completion tokens for a reply
+  of about 300 characters, 42-97s, or an empty reply. The revision now gets the facts
+  plus the critic's issues as rules, without the previous answer (0.8-15.6s above);
+  it still hit its 65s limit twice in the smoke tests.
 - **Nightshift 1.2.1 still works, but is slower.** It ignores the flag, so every call
   reasons first and takes about 10-90s. The design's parallel factor agents, per-call
   limits and rule fallbacks came from that (see Limitations in the README).
