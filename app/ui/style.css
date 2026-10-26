@@ -59,7 +59,7 @@ code { font: 0.85em ui-monospace, SFMono-Regular, Consolas, monospace; }
 .sponsor.nemotron { border-color: #94d82d; }
 .sponsor.hmem { border-color: #ff922b; }
 
-main { padding-top: 20px; padding-bottom: 12px; }
+main, main.wrap { padding-top: 20px; padding-bottom: 12px; } /* .wrap's padding hid the gap (QA) */
 
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: 12px;

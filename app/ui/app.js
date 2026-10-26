@@ -34,6 +34,7 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const seconds = (ms) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "");
 const supportClass = (s) => (s || "").replace(/\s+/g, "-");
 
@@ -73,6 +74,7 @@ async function loadHealth() {
 
 const SPONSOR = {
   zetaris: ["zetaris", "Zetaris query"],
+  sample: ["zetaris", "Sample data query"],
   model: ["nightshift", "Nemotron via Nightshift"],
   hmemStore: ["hmem", "H-MEM store"],
   hmemRetrieve: ["hmem", "H-MEM retrieve"],
@@ -96,8 +98,9 @@ function describe(l) {
     if (!modelConfigured) return null; // no model at all: the rule-based rows say what ran instead
     return row("model", who, `no usable reply (${l.error || l.status}) after ${seconds(ms)}: falls back to code rules`, "warn");
   }
+  const data = sampleMode ? "sample" : "zetaris"; // sample mode runs the same SQL on data/sample/
   if (agent === "memory") {
-    if (l.action === "resolve_players") return row("zetaris", "Memory: roster lookup", `${l.rows_returned ?? 0} players found`, null);
+    if (l.action === "resolve_players") return row(data, "Memory: roster lookup", `${l.rows_returned ?? 0} players found`, null);
     if (l.action === "store") {
       const kinds = (l.facts || []).map((f) => `${f.kind}: ${f.value}`).join(", ");
       return row("hmemStore", "League memory stored", kinds || "nothing new to store", null);
@@ -113,8 +116,8 @@ function describe(l) {
   }
   if (["season_context", "player_lookup", "factor_query", "query"].includes(l.action)) {
     const name = l.factor || { season_context: "Season context", player_lookup: "Player lookup" }[l.action] || "Query";
-    if (l.status === "ok") return row("zetaris", name, `${l.rows_returned ?? 0} rows · ${seconds(ms)}`, null);
-    return row("zetaris", name, `failed: ${l.error || l.status}`, "bad");
+    if (l.status === "ok") return row(data, name, `${plural(l.rows_returned ?? 0, "row")} · ${seconds(ms)}`, null);
+    return row(data, name, `failed: ${l.error || l.status}`, "bad");
   }
   if (l.action === "rate_factor" && factor) {
     const by = l.rated_by === "model" ? "model" : "rules";
@@ -124,16 +127,21 @@ function describe(l) {
   if (agent === "analyst" && l.action === "verdict" && l.status === "fallback") {
     return row("rules", "Verdict: rule-based", l.verdict || "", "warn");
   }
+  if (agent === "analyst" && l.action === "answer" && l.status !== "ok") {
+    // QA: a failed run said "Analyst answer ready · undefined queries · undefined factors".
+    return row("agent", "Analyst could not answer", l.reason || l.error || l.status, "bad");
+  }
   if (agent === "analyst" && l.action === "answer") {
     const premise = l.premise_corrected ? " · premise corrected from the data" : "";
     return row("agent", "Analyst answer ready", `${l.queries} queries · ${l.factors} factors · verdict by ${l.verdict_by}${premise}`, null);
   }
   if (agent === "critic" && l.action === "review" && l.status === "fallback") {
+    if (!modelConfigured) return null; // no review was tried: the critique row says "reviewed by rule-based"
     return row("rules", `Critic round ${l.round}: code checks only`, "the model review had no usable reply", "warn");
   }
   if (agent === "critic" && l.action === "critique") {
     const tone = l.status === "approved" ? "good" : "warn";
-    const sub = `${l.status.replace("_", " ")} · ${l.blocking} blocking of ${(l.issues || []).length} issues · reviewed by ${l.reviewed_by}`;
+    const sub = `${l.status.replaceAll("_", " ")} · ${l.blocking} blocking of ${plural((l.issues || []).length, "issue")} · reviewed by ${l.reviewed_by}`;
     return row("agent", `Critic round ${l.round}`, sub, tone);
   }
   if (agent === "analyst" && l.action === "revise") {
@@ -172,7 +180,7 @@ function renderTimeline(lines, running) {
 async function ask(question, userId) {
   if (current && !current.done) return;
   const runId = newRunId();
-  current = { runId, startedWall: Date.now(), started: performance.now(), done: false };
+  current = { runId, startedWall: Date.now(), started: performance.now(), done: false, failures: 0, missing: 0 };
   $("error").hidden = true;
   $("result").hidden = true;
   $("result").replaceChildren();
@@ -195,22 +203,35 @@ async function ask(question, userId) {
     await finish(run, res.status, reply);
   } catch (error) {
     // The connection dropped (or the browser gave up on a long request): the trace still
-    // has the result once the run is done, so keep polling.
+    // has the result once the run is done, so keep polling; poll() gives up if the API is gone.
     console.warn("POST /run failed; waiting for the trace", error);
+    run.postFailed = true;
   }
+}
+
+const MAX_POLL_FAILURES = 3; // about 6s of an unreachable API after the POST failed
+
+function unreachable(run) {
+  return finish(run, 0, { message: `Can't reach the API at ${API}. Check that python run.py is still running, then ask again.` }, []);
 }
 
 async function poll(run) {
   if (run.done) return;
   try {
     const res = await fetch(`${API}/trace/${run.runId}`);
-    if (!res.ok) return; // 404 until the server has registered the run
+    run.failures = 0;
+    if (!res.ok) { // 404 until the server has registered the run; for good if the POST never arrived
+      if (run.postFailed && ++run.missing >= MAX_POLL_FAILURES) await unreachable(run);
+      return;
+    }
     const t = await res.json();
     if (run.done) return;
     renderTimeline(t.lines, !t.done);
     if (t.done) await finish(run, t.status, t.result, t.lines);
   } catch (error) {
     console.warn("trace poll failed", error);
+    // QA: with the API down the card said RUNNING forever and Ask stayed disabled.
+    if (run.postFailed && ++run.failures >= MAX_POLL_FAILURES) await unreachable(run);
   }
 }
 
@@ -226,7 +247,8 @@ async function finish(run, status, reply, lines) {
       if (res.ok) lines = (await res.json()).lines;
     } catch (error) { /* the reply has the result; the timeline keeps its last poll */ }
   }
-  if (lines) renderTimeline(lines, false);
+  renderTimeline(lines || [], false); // never leave the "Starting…" row next to a finished status
+  if (!lines || !lines.length) $("download").removeAttribute("href"); // no trace was kept for this run
   if (reply && reply.error === "needs_clarification") {
     setStatus("unresolved", "Which player?");
     showError(reply.message, "Which player? ");
@@ -353,7 +375,7 @@ function factorCards(factors) {
 function evidenceBlock(e) {
   const rows = e.rows || [];
   return el("details", {},
-    el("summary", { text: `Query ${e.query_id} · ${rows.length} rows` }),
+    el("summary", { text: `Query ${e.query_id} · ${plural(rows.length, "row")}` }),
     el("pre", { class: "sql", text: e.sql }),
     el("div", { class: "table-wrap" }, el("table", {},
       el("thead", {}, el("tr", {}, (e.headers || []).map((h) => el("th", { text: h })))),
@@ -405,6 +427,8 @@ function memoryDetails(m) {
 
 function timingDetails(t) {
   const busy = Object.entries(t.agent_busy_ms || {});
+  // With no model configured every model call "fails" at once; that is not news (QA).
+  const calls = (t.model_calls || []).filter((c) => modelConfigured || c.status !== "error");
   return el("details", { class: "card" },
     el("summary", { text: `Timings (total ${seconds(t.total_ms)})` }),
     el("dl", { class: "kv" },
@@ -413,9 +437,10 @@ function timingDetails(t) {
       ...busy.flatMap(([agent, ms]) => [el("dt", { text: agent }), el("dd", { text: `${seconds(ms)} busy` })]),
     ),
     el("p", { class: "disclaimer", text: "Factor agents run in parallel, so busy times add up to more than the total." }),
-    el("div", { class: "table-wrap" }, el("table", {},
+    calls.length ? null : el("p", { class: "disclaimer", text: "No model calls: no model is configured, so every step used the code rules." }),
+    calls.length === 0 ? null : el("div", { class: "table-wrap" }, el("table", {},
       el("thead", {}, el("tr", {}, ["Agent", "Step", "Status", "Time", "Model"].map((h) => el("th", { text: h })))),
-      el("tbody", {}, (t.model_calls || []).map((c) => el("tr", {},
+      el("tbody", {}, calls.map((c) => el("tr", {},
         el("td", { text: c.agent }), el("td", { text: c.step || "" }), el("td", { text: c.status }),
         el("td", { text: seconds(c.duration_ms) }), el("td", { text: c.model ? `${modelName(c.model)} via Nightshift` : "-" }),
       ))),
@@ -436,6 +461,7 @@ $("ask-form").addEventListener("submit", (event) => {
   const question = $("question").value.trim();
   const userId = $("user-id").value.trim();
   if (question) ask(question, userId);
+  else showError("Type a question about a player first.");
 });
 
 loadHealth();

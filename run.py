@@ -249,13 +249,29 @@ def health() -> dict[str, Any]:
 ROUTES = "Routes: POST /run, GET /trace/<run_id>, GET /health."
 
 
+SERVED_UI_PORT: int | None = None  # set by serve(), so --ui-port counts as much as UI_PORT
+
+
 def ui_origins() -> set[str]:
-    """Browser origins allowed to call the API: the UI's (UI_ORIGINS, comma-separated, overrides)."""
+    """Browser origins allowed to call the API: the UI's (UI_ORIGINS, comma-separated, overrides).
+    QA, 26 October 2026: `python run.py --ui-port 8380` served the UI there but allowed only 8080."""
     configured = os.environ.get("UI_ORIGINS")
     if configured:
         return {o.strip().rstrip("/") for o in configured.split(",") if o.strip()}
-    port = os.environ.get("UI_PORT") or DEFAULT_UI_PORT
+    port = SERVED_UI_PORT or os.environ.get("UI_PORT") or DEFAULT_UI_PORT
     return {f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
+
+
+def _clean(value: Any) -> Any:
+    """JSON allows a lone surrogate ("\\ud800"), which UTF-8 cannot encode: replace it, so
+    the trace and the reply can be written (QA: the connection closed with no reply)."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {_clean(k): _clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    return value
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -314,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
             raise RequestError(413, "too_large", f"The body must be at most {MAX_BODY_BYTES} bytes.")
         raw = self.rfile.read(length)
         try:
-            return json.loads(raw.decode("utf-8"))
+            return _clean(json.loads(raw.decode("utf-8")))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise RequestError(400, "bad_json", f"The body is not valid JSON: {error}.") from None
 
@@ -322,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_text(status, json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8")
 
     def _send_text(self, status: int, text: str, content_type: str, headers: dict[str, str] | None = None) -> None:
-        data = text.encode("utf-8")
+        data = text.encode("utf-8", "replace")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -392,9 +408,17 @@ def make_ui_server(host: str = "0.0.0.0", port: int = DEFAULT_UI_PORT, api_port:
 
 def serve(port: int, ui_port: int | None = DEFAULT_UI_PORT) -> None:
     """The API on port and (unless ui_port is None) the UI on ui_port, each in its own thread."""
-    servers = [make_server(port=port)]
-    if ui_port is not None:
-        servers.append(make_ui_server(port=ui_port, api_port=port))
+    global SERVED_UI_PORT
+    SERVED_UI_PORT = ui_port
+    try:
+        servers = [make_server(port=port)]
+        if ui_port is not None:
+            servers.append(make_ui_server(port=ui_port, api_port=port))
+    except OSError as error:  # QA: a port in use printed a raw traceback
+        print(json.dumps({"event": "error", "error": "port_unavailable",
+                          "message": f"Could not listen on port {port} or {ui_port}: {error.strerror}. "
+                                     "Free the port, or pick others with --port and --ui-port."}), flush=True)
+        raise SystemExit(1) from None
     threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
     for t in threads:
         t.start()

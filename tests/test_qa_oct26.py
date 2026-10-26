@@ -20,6 +20,12 @@ def no_model(real_sample, model, monkeypatch, trace_dir):
     return model
 
 
+@pytest.fixture
+def memory_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
+    return tmp_path / "memory"
+
+
 def ask(question: str, **kwargs):
     return pipeline.answer(question, model_review=False, **kwargs)
 
@@ -181,3 +187,75 @@ def test_a_roster_list_is_not_a_choice(no_model, question, start):
 def test_bare_surnames_share_the_position_of_the_unique_one(no_model):
     # The README's own example; before, "Williams" was Kyren Williams, an RB.
     assert ask("Williams or Pickens?").result.answer.startswith("Start George Pickens over Jameson Williams.")
+
+
+# --- the server ---
+
+
+def test_a_lone_surrogate_gets_a_reply(no_model):
+    import threading
+    import urllib.request
+
+    import run as app_run
+    srv = app_run.make_server("127.0.0.1", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        for extra in ("", ', "user_id": "qa"'):
+            body = ('{"question": "\\ud800 Should I start Jared Goff?"' + extra + "}").encode()
+            req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/run", data=body,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as resp:  # before: no reply, or a 500
+                assert resp.status == 200 and "Jared Goff" in resp.read().decode()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_ui_port_flag_is_an_allowed_origin(monkeypatch):
+    import run as app_run
+    monkeypatch.delenv("UI_ORIGINS", raising=False)
+    monkeypatch.delenv("UI_PORT", raising=False)
+    monkeypatch.setattr(app_run, "SERVED_UI_PORT", 8380)  # what serve() sets from --ui-port
+    assert "http://localhost:8380" in app_run.ui_origins()
+
+
+# --- league memory ---
+
+
+def test_parallel_runs_for_one_user_keep_every_fact(no_model, memory_dir):
+    import threading
+
+    questions = ["I have Jared Goff.", "I have Puka Nacua.", "I have Jahmyr Gibbs.", "I have Bijan Robinson."]
+    threads = [threading.Thread(target=ask, args=(q,), kwargs={"user_id": "race"}) for q in questions]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    ctx = ask("Should I start Jared Goff?", user_id="race").result.user_context
+    assert set(ctx.roster_names) == {"Jared Goff", "Puka Nacua", "Jahmyr Gibbs", "Bijan Robinson"}
+
+
+def test_the_whole_roster_and_the_scoring_survive_a_long_memory(no_model, memory_dir):
+    from app.agents import memory
+
+    memory.store("long", "12-team half-PPR league.", "qa", miner_fn=None)
+    names = ["Puka Nacua", "Jahmyr Gibbs", "Bijan Robinson", "Josh Allen", "George Kittle", "Davante Adams",
+             "Brock Bowers", "Trey McBride", "Chris Olave", "Zay Flowers", "George Pickens", "Jameson Williams",
+             "Jonathan Taylor", "Kyren Williams", "Sam LaPorta", "Christian Watson", "Bucky Irving", "Jared Goff"]
+    memory.store("long", "I have " + ", ".join(names[:-1]) + " and " + names[-1] + ".", "qa", miner_fn=None)
+    ctx = ask("Should I start Chris Olave?", user_id="long").result.user_context
+    assert ctx.scoring == "half" and ctx.teams == 12
+    assert len(ctx.roster) == len(names)  # before: the top 15 records only
+
+
+# --- web UI (checked in a headless browser on 26 October; these pin the fixes) ---
+
+
+def test_ui_script_handles_failures_and_sample_mode():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app" / "ui" / "app.js").read_text(encoding="utf-8")
+    assert "Analyst could not answer" in js          # not "Analyst answer ready · undefined queries"
+    assert "unreachable(run)" in js                  # the card no longer says RUNNING forever
+    assert 'modelConfigured || c.status !== "error"' in js  # no wall of "error" timings without a model
+    assert '"Sample data query"' in js               # sample mode does not claim Zetaris

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -384,8 +385,12 @@ def retrieve(user_id: str, question: str, run_id: str) -> UserContext:
     # In the order they were stored (ties in the same millisecond keep store order), so the
     # newest fact wins if two are live and the roster keeps the order the user gave it.
     stored = {r.id: i for i, r in enumerate(mem.store.all())}
-    live = sorted((r.memory for r in result.memories if not r.memory.supersededBy),
+    # The league facts come from every live record, not only the top-ranked ones the prompt
+    # block carries (QA, 26 October 2026: with 18 players stored, 5 fell out of the roster and
+    # the scoring setting dropped out, so the league flipped between half-PPR and PPR).
+    live = sorted((r for r in mem.store.all() if not r.supersededBy and "review" not in r.tags and _key(r)),
                   key=lambda m: (m.timestamp, stored[m.id]))
+    ctx.remembered = ctx.remembered or bool(live)
     for m in live:
         for tag in m.tags:
             name, _, value = tag.partition("=")
@@ -412,9 +417,21 @@ def retrieve(user_id: str, question: str, run_id: str) -> UserContext:
 
 def remember(user_id: str, question: str, run_id: str, session_id: str | None = None,
              miner_fn: Callable[[str], str] | None = meterless_miner) -> UserContext:
-    """Store what this question says, then retrieve everything relevant for answering it."""
-    store(user_id, question, run_id, session_id, miner_fn)
-    return retrieve(user_id, question, run_id)
+    """Store what this question says, then retrieve everything relevant for answering it.
+    One user's runs take turns: the store loads the whole state, changes it and writes it
+    back, so two parallel runs lost each other's facts (QA: 10 of 10 trials)."""
+    with _user_lock(user_id):
+        store(user_id, question, run_id, session_id, miner_fn)
+        return retrieve(user_id, question, run_id)
+
+
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _user_lock(user_id: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(user_id, threading.Lock())
 
 
 def _ms(started: float) -> int:
