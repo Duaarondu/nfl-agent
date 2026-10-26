@@ -248,7 +248,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 357 tests
+pytest           # 444 tests
 ```
 
 The tests cover:
@@ -333,6 +333,9 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
 - **Claude Code:** the project was built with Claude Code, from `CLAUDE.md`'s rules
   (adapters only, one SQL statement per call, traces, sample mode, 3 critic rounds).
   The commits are co-authored by Claude.
+- **Cursor:** not used. The organizers made Cursor optional on 22 October 2026, and
+  #help-desk confirmed it isn't required on 25 October; the project was built in
+  Claude Code.
 
 **What was unique:**
 - **The Critic tests timing.** "His target share rose after Jayden Reed got hurt" is
@@ -342,6 +345,13 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
 - **Factor agents are small and parallel**, each seeing only one factor's facts, with a
   rule fallback, so a slow model never leaves the user without an answer.
 - **Every answer says which steps a model produced and which the code rules produced.**
+- **Factor directions and matchup labels are computed in code**, and a model summary
+  that contradicts them is replaced.
+- **Hard rules fall back instead of looping.** If a revision still breaks a hard rule
+  (out player, rostered player, bye, compare leader, matchup direction), the last
+  verdict is a labelled rule-based one.
+- **H-MEM is implemented from the Meterless spec** and passes the official conformance
+  runner 13/13.
 
 ---
 

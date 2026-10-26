@@ -40,8 +40,9 @@
     {
       "name": "Critic",
       "file": "app/agents/critic.py",
-      "role": "Code checks: verdict support, numbers, artifacts, question fit, timing, league memory, compare. Then an optional model review; blocking issues send the verdict back for revision.",
-      "max_rounds": 3
+      "role": "Code checks: verdict support, numbers, artifacts, question fit, timing, league memory, compare, no-data, position label, factor direction (by metric polarity), matchup label and bye. Then an optional model review (it can block only in round 1). Blocking issues send the verdict back for revision; if the revision still breaks a hard rule, the round-3 verdict is rule-based and labelled.",
+      "max_rounds": 3,
+      "directions": "app/agents/directions.py"
     }
   ],
   "question_types": [
@@ -56,6 +57,11 @@
     "premise_correction": "A wrong team in the question is corrected from the rosters table before the agents answer.",
     "league_memory": "With a user_id: league size, scoring and roster are stored and retrieved with the H-MEM engine.",
     "provenance": "Each claim carries its SQL and rows; each reply says which steps a model or the code rules produced.",
+    "factor_directions": "Which player each factor favours is computed in code from each metric's polarity (app/agents/directions.py); a model summary that contradicts it is replaced by the code summary, labelled.",
+    "matchup_labels": "Each opponent's rank in points allowed (1 = allows the most) is labelled in code: 1-10 of 32 favorable, 11-22 neutral, 23-32 tough. The label is in the factor and verdict facts, and wording that contradicts it is blocked.",
+    "bye_check": "With no week named, the target week is the latest stats week + 1; a player on bye gets \"Sit <player>\" as a hard rule, and the Critic blocks a start.",
+    "no_data_and_position_checks": "The Critic blocks a pick of a player with no data and a player given another position's label (e.g. a TE called WR1).",
+    "hard_rule_fallback": "Hard rules (out player, rostered player, usage pick, compare leader, named player, position label, no data, bye, matchup direction): if the round-2 revision still breaks one, the round-3 verdict is rule-based and labelled instead of looping.",
     "disclaimer": "Informational only, based on nflverse data; not betting advice."
   },
   "meterless": {
@@ -128,6 +134,7 @@
       "receipts": "Nightshift Console Proof page, one receipt per request (docs/images/nightshift-receipts.png)"
     }
   ],
+  "cursor": "Cursor: not used. The organizers made Cursor optional on 22 October 2026, and #help-desk confirmed it isn't required on 25 October; the project was built in Claude Code.",
   "data_sources": [
     {
       "name": "nflverse",
@@ -150,7 +157,7 @@
     "live_examples": "scripts/try_pipeline.py --live [--user ID] \"question\"",
     "critic_demo": "scripts/demo_critic.py",
     "docker": "Dockerfile (exposes 8000 and 8080)",
-    "tests": "pytest (357 tests)",
+    "tests": "pytest (444 tests)",
     "ci": ".github/workflows/ci.yml"
   },
   "traces": {

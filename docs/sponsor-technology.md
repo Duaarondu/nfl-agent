@@ -219,6 +219,10 @@ The project was built in Claude Code, in this repository, from 22 October 2026:
     `examples/archive/`, or a compare question that analysed only one player.
   - **Commits:** the commits are co-authored by Claude.
 
+## Cursor
+
+Cursor: not used. The organizers made Cursor optional on 22 October 2026, and #help-desk confirmed it isn't required on 25 October; the project was built in Claude Code.
+
 ## What was unique
 
 - **A Critic that tests timing.** A claim like "his target share rose after Jayden
