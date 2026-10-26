@@ -244,7 +244,7 @@ def test_classify_falls_back_to_keywords(real_sample, model, trace_dir):
 
 def test_no_player_found_raises(real_sample, model):
     script(model, classify(None, "start_sit"))
-    with pytest.raises(AnalystError, match="Could not find the NFL player"):
+    with pytest.raises(AnalystError, match="^I answer questions about specific players. Try: "):
         analyze("Who should I start at flex this week?")
     assert len(model.calls) == 1
 

@@ -13,6 +13,9 @@ const MAX_ROWS_SHOWN = 25;
 const $ = (id) => document.getElementById(id);
 let current = null; // {runId, started, timer, poller, done}
 let modelConfigured = true; // from /health; without a model, failed model calls are not shown
+let sampleMode = false; // from /health; with no model either, the answer gets a one-line notice
+const SAMPLE_NOTICE = "Sample mode: no model is configured, so every step uses the code rules on the committed "
+  + "data sample. In live mode each step runs on NVIDIA Nemotron through Meterless Nightshift and the SQL runs on Zetaris.";
 
 // --- small DOM helpers (text only: nothing from the API is parsed as HTML) ---
 
@@ -54,6 +57,7 @@ async function loadHealth() {
     const res = await fetch(`${API}/health`);
     const h = await res.json();
     modelConfigured = Boolean(h.model_configured);
+    sampleMode = Boolean(h.sample_mode);
     badges.replaceChildren(
       el("span", { class: `badge ${h.sample_mode ? "sample" : "live"}`,
                    text: h.sample_mode ? "Sample mode" : "Live Zetaris" }),
@@ -273,6 +277,7 @@ function renderResult(r) {
                    text: steps.final_verdict === "model" ? "verdict by Nemotron" : "verdict by code rules" }),
     ),
     el("p", { class: "answer", text: finalText }),
+    sampleMode && !modelConfigured ? el("p", { class: "disclaimer sample-notice", text: SAMPLE_NOTICE }) : null,
     el("p", { class: "disclaimer", text: r.disclaimer }),
     el("p", { class: "disclaimer" },
       `Planner: ${steps.planner || "?"} · factors by model: ${factorsByModel}/${factorCount} · `

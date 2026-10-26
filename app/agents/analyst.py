@@ -336,10 +336,10 @@ def analyze(
     if plan.player is None:
         trace(run_id, AGENT_NAME, "answer", "error", reason="no player found")
         suggestion = _closest_name(run_id, question, season) if season else None
-        raise AnalystError(
-            "Could not find the NFL player this question is about in this season's rosters. "
-            + (f"Did you mean {suggestion}? " if suggestion else "") + "Name the player in full."
-        )
+        if suggestion:  # a misspelt name ("Justin Jeffersen")
+            raise AnalystError("Could not find the NFL player this question is about in this season's rosters. "
+                               f"Did you mean {suggestion}? Name the player in full.")
+        raise AnalystError(NO_PLAYER_MESSAGE)
 
     window = _factor_window(started + TOTAL_BUDGET - time.perf_counter())
     # The agents get the question with its wrong premise already corrected from the data.
@@ -425,6 +425,13 @@ def _player_line(plan: Plan) -> str:
         line += f" Named by last name: {plan.name_note()}"
     note = plan.premise_note()
     return f"{line} Premise check: {note} Answer for the team in the data." if note else line
+
+
+# A question that names no player ("Who should I pick up at RB?", "Best waiver add this week?").
+NO_PLAYER_MESSAGE = (
+    "I answer questions about specific players. Try: 'Should I start Jared Goff?', 'Pickens or Olave?', "
+    "'Who replaces McCaffrey if he's out?', 'Is Kyle Monangai playing?'"
+)
 
 
 def _closest_name(run_id: str, question: str, season: int) -> str | None:

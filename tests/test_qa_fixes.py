@@ -413,3 +413,15 @@ def test_he_at_a_sentence_start_is_the_previous_sentences_player():
     assert any(p.startswith("it gives Jonathan Taylor the easier matchup") for p in directions.contradictions(wrong, d))
     right = "Bucky Irving has more touchdowns. He also has the easier matchup: CAR rank 5."
     assert directions.contradictions(right, d) == []
+
+
+# --- a question that names no player gets examples, not "Name the player in full" ---
+
+
+@pytest.mark.parametrize("question", ["who should I pick up at RB?", "best waiver add this week?"])
+def test_no_player_named_gets_examples(no_model, question):
+    with pytest.raises(AnalystError) as raised:
+        pipeline.answer(question, model_review=False)
+    assert str(raised.value) == (
+        "I answer questions about specific players. Try: 'Should I start Jared Goff?', 'Pickens or Olave?', "
+        "'Who replaces McCaffrey if he's out?', 'Is Kyle Monangai playing?'")

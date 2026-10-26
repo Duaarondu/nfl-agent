@@ -16,6 +16,50 @@ explanation holds up, and sends it back for revision if it doesn't.
 
 Every answer ends with: *Informational only, based on nflverse data; not betting advice.*
 
+## Try it in 60 seconds
+
+Sample mode needs no credentials: the committed data sample, and code rules for every
+model step. Start it one of two ways:
+
+```bash
+docker build -t nfl-agent . && docker run -p 8000:8000 -p 8080:8080 nfl-agent
+```
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python run.py
+```
+
+Then open <http://localhost:8080>, or ask the API:
+
+```bash
+curl -X POST http://localhost:8000/run -H "Content-Type: application/json" \
+  -d '{"question": "Should I start Jared Goff this week?"}'
+```
+
+One question per type:
+
+| Type | Question |
+|---|---|
+| Start/sit | Should I start Jared Goff this week? |
+| Compare | Pickens or Olave? |
+| Replacement | Christian McCaffrey is out. Who replaces him? |
+| Why | Why is Christian Watson scoring so many fantasy points this season? |
+| Status | Is Kyle Monangai playing this week? |
+| Out of scope (honest limit) | Should I trade Malik Nabers for Davante Adams? |
+
+### What it doesn't do yet
+
+- Trades
+- Rest-of-season value
+- FAAB bid amounts
+- Streaming picks
+- Kickers and defenses
+- Questions that name no player ("who should I pick up at RB?")
+- Live data after week 6 (the data is a snapshot through week 6)
+
+For questions it can't answer, it says so; a trade question still gets the named players'
+numbers for the week. More in [Limitations](#limitations).
+
 ---
 
 ## Architecture
@@ -250,7 +294,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 526 tests
+pytest           # 528 tests
 ```
 
 The tests cover:
@@ -419,8 +463,9 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
   questions.
 - **Self-hosted only.** Run it yourself with Docker or Python; there is no hosted
   deployment.
-- **Questions that name no player** get "Name the player in full", except kicker and
-  defense questions ("I cover QB, RB, WR and TE only").
+- **Questions that name no player** ("who should I pick up at RB?") are not answered:
+  the reply says it answers questions about specific players and gives four examples.
+  Kicker and defense questions get "I cover QB, RB, WR and TE only".
 - **Limited name matching.** About 20 common nicknames and first names ("CMC", "JSN",
   "Puka") are recognised from a fixed list. A misspelt name is not answered: the reply
   suggests the closest roster name ("Did you mean Justin Jefferson?").
