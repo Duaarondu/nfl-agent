@@ -27,73 +27,98 @@ def with_answer(slug, answer):
 # --- a) verdict support ---
 
 
-def test_samuel_verdict_is_flagged_by_target_share():
-    [issue] = issues(load_example(BUCS), "verdict_support")
-    assert issue.blocking and issue.claim == "Start Deebo Samuel."
-    assert issue.reason.startswith(
-        "Deebo Samuel Sr.'s recent target share (11.1%) trails George Kittle (TE) 24.9% "
-        "and Christian McCaffrey (RB) 22.8%, and is less than half of George Kittle's."
-    )
+NOT_A_WR = ("George Kittle is not a WR below Mike Evans on the SF depth chart who can play; "
+            "the stand-ins are Deebo Samuel, Brandin Cooks, Jacob Cowing.")
+
+
+def with_depth_status(result, statuses):
+    """Give the depth chart rows roster and injury-report columns: {name: (roster_status, report_status)}."""
+    [depth] = [q for q in result.queries if q.factor == "Depth chart"]
+    at = depth.headers.index("player_name")
+    depth.headers = depth.headers + ["roster_status", "report_status"]
+    depth.rows = [row + list(statuses.get(row[at], ("ACT", None))) for row in depth.rows]
+    return result
+
+
+def test_saved_samuel_verdict_passes_the_stand_in_check():
+    # Samuel is a WR, next below Evans on the depth chart, and leads the WRs below him (11.1%).
+    assert not issues(load_example(BUCS), "verdict_support")
+
+
+def test_a_pick_who_is_not_a_wr_below_evans_is_blocked():
+    # QA run, 26 Oct: Kittle (TE) was picked to replace Evans (WR) on target share.
+    for answer in ("Pick up George Kittle. His 24.9% recent target share leads.",
+                   "Pick up Christian McCaffrey. He has 22.8%."):
+        [issue] = issues(with_answer(BUCS, answer), "verdict_support")
+        assert issue.blocking and issue.rule == "pick"
+        assert issue.reason == NOT_A_WR.replace("George Kittle", answer.split(".")[0].removeprefix("Pick up "))
+
+
+@pytest.mark.parametrize("status, why", [(("RES", None), "reserve"), (("ACT", "Out"), "Out")])
+def test_a_wr_who_cannot_play_is_not_a_stand_in(status, why):
+    result = with_depth_status(with_answer(BUCS, "Start Deebo Samuel. The depth chart ranks him second."),
+                               {"Deebo Samuel": status})
+    [issue] = issues(result, "verdict_support")
+    assert issue.blocking, why
+    assert issue.reason == ("Deebo Samuel is not a WR below Mike Evans on the SF depth chart who can play; "
+                            "the stand-ins are Brandin Cooks, Jacob Cowing, Jordan Watkins.")
 
 
 def test_verdict_backed_by_the_numbers_passes():
-    assert not issues(with_answer(BUCS, "Pick up George Kittle. His 24.9% recent target share leads."), "verdict_support")
-    # The depth chart may still be mentioned, as long as the pick follows the usage numbers.
-    depth_noted = with_answer(BUCS, (
-        "Pick up George Kittle. Deebo Samuel is next at WR on the depth chart, but Kittle (24.9%) "
-        "and Christian McCaffrey (22.8%) get far more targets than his 11.1%."
-    ))
-    assert not issues(depth_noted, "verdict_support")
+    for answer in ("Pick up Deebo Samuel. His 11.1% recent target share leads the WRs below Evans.",
+                   "Start Deebo Samuel. The depth chart ranks him second.",
+                   # Other teammates may still be mentioned, as long as the pick is a WR below Evans.
+                   "Pick up Deebo Samuel. George Kittle (24.9%) and Christian McCaffrey (22.8%) see more targets, "
+                   "but neither plays WR."):
+        assert not issues(with_answer(BUCS, answer), "verdict_support"), answer
 
 
 def test_replacement_answer_shape_passes_check_a():
-    # The literal answer (the depth chart's next WR) first, then the pick the target share backs.
+    # The literal answer (the depth chart's next WR) first, then the fantasy advice.
     result = with_answer(BUCS, (
-        "Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), "
-        "so for fantasy: pick up George Kittle. He has the top recent target share among his teammates."
+        "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+        "so for fantasy: pick up Deebo Samuel. The depth chart ranks him second."
     ))
-    assert critic.verdict_sentence(result.answer) == "pick up George Kittle."
+    assert critic.verdict_sentence(result.answer) == "pick up Deebo Samuel."
     assert not issues(result, "verdict_support") and not issues(result, "question_fit")
 
 
-def test_replacement_answer_shape_still_follows_the_usage_numbers():
+def test_replacement_answer_shape_still_needs_a_stand_in():
     result = with_answer(BUCS, (
-        "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
-        "so for fantasy: pick up Deebo Samuel."
+        "Deebo Samuel is next at WR on the depth chart, "
+        "so for fantasy: pick up George Kittle."
     ))
     [issue] = issues(result, "verdict_support")
-    assert issue.blocking and "less than half of George Kittle's" in issue.reason
+    assert issue.blocking and issue.reason == NOT_A_WR
 
 
-def test_todays_live_samuel_answer_is_blocked_even_though_it_names_kittle():
-    # Run 5630e3d22688: the critic approved this in round 2 before check (a) was tightened.
+def test_todays_live_samuel_answer_passes_the_stand_in_check():
+    # Run 5630e3d22688 was blocked for trailing Kittle's target share; Kittle is a TE, so Samuel stands.
     result = load_example(BUCS, run="5630e3d22688")
     assert result.answer.startswith("Start Deebo Samuel.") and "Kittle 24.9%" in result.answer
-    [issue] = issues(result, "verdict_support")
-    assert issue.blocking
-    assert "and is less than half of George Kittle's. A 'Start' must follow the usage numbers" in issue.reason
+    assert not issues(result, "verdict_support")
 
 
 @pytest.mark.parametrize("answer", [
-    # Samuel is named with Kittle and McCaffrey: mentioning them no longer saves a confident action.
-    "Pick up Deebo Samuel. He is next on the WR depth chart, though George Kittle (24.9%) "
-    "and Christian McCaffrey (22.8%) see more targets than his 11.1%.",
-    "Add Deebo Samuel. Kittle and McCaffrey see more targets.",
+    "Pick up Jacob Cowing. He is a WR below Evans with a 3.7% recent target share.",
+    "Add Jacob Cowing. He is a WR.",
 ])
 def test_confident_action_under_half_the_top_share_is_blocked(answer):
     [issue] = issues(with_answer(BUCS, answer), "verdict_support")
-    assert issue.blocking and "less than half of George Kittle's" in issue.reason
+    assert issue.blocking and issue.rule == "pick"
+    assert issue.reason == ("Deebo Samuel has the most recent target share among the WRs below Mike Evans (11.1%), "
+                            "against Jacob Cowing's 3.7%: recommend Deebo Samuel.")
 
 
-def test_weaker_action_or_closer_share_only_needs_the_teammates_named():
-    # Stash is not a confident action; McCaffrey's 22.8% is more than half of Kittle's 24.9%.
+def test_weaker_action_closer_share_or_naming_the_leader_passes():
+    # Stash is not a confident action; Cooks' 7.2% is more than half of Samuel's 11.1%;
+    # an answer that names Samuel has weighed him.
     for answer in (
-        "Stash Deebo Samuel. Kittle (24.9%) and McCaffrey (22.8%) get more targets; he is next on the depth chart.",
-        "Pick up Christian McCaffrey. Kittle's 24.9% is close to his 22.8%.",
+        "Stash Jacob Cowing. He is a WR.",
+        "Pick up Brandin Cooks. He is a WR.",
+        "Pick up Jacob Cowing. Deebo Samuel sees more targets.",
     ):
         assert not issues(with_answer(BUCS, answer), "verdict_support"), answer
-    [issue] = issues(with_answer(BUCS, "Pick up Christian McCaffrey. He has 22.8%."), "verdict_support")
-    assert "trails George Kittle (TE) 24.9%. The answer must explain why" in issue.reason
 
 
 def test_why_verdict_about_the_player_himself_is_not_compared():
@@ -332,7 +357,7 @@ def test_failed_review_falls_back_to_the_code_checks(review, trace_dir, failure)
     review.reply = failure
     found = critic.critique(load_example(BUCS), 1, FAR_OFF)
     assert found.reviewed_by == "rule-based"
-    assert {i.check for i in found.blocking} == {"verdict_support", "artifacts"}
+    assert {i.check for i in found.blocking} == {"artifacts"}  # the saved answer's copied labels
     [line] = [l for l in read_trace(trace_dir) if l["action"] == "review"]
     assert (line["agent_name"], line["status"], line["reviewed_by"]) == ("critic", "fallback", "rule-based")
 
@@ -568,7 +593,7 @@ def test_a_review_issue_that_calls_the_claim_correct_is_a_note(review, reason, b
 
 
 def test_hard_rule_tags_and_the_fallback_reason():
-    result = with_answer(BUCS, "Start Deebo Samuel. The depth chart ranks him second.")
+    result = with_answer(BUCS, "Start George Kittle. His 24.9% recent target share leads.")
     [issue] = issues(result, "verdict_support")
     assert issue.rule == "pick"
     roster = critic.Issue("user_context", "answer", "pick up George Kittle.",

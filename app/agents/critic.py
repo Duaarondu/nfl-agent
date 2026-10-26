@@ -248,6 +248,9 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
         return []  # already on the user's roster: check (f) user_context covers it
     issues = []
 
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
+    if result.player and _table(result, "Depth chart"):
+        return _stand_in_support(result, verdict, name, results)
     usage = _table(result, "Team usage")
     if usage:
         names, positions, recent = usage.text("player_display_name"), usage.text("position"), usage.col("recent_target_share_pct")
@@ -293,6 +296,32 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
                     f"In the games {subject} missed, {top} had the top target share ({_fmt(share[best])}%), not {name}.",
                 ))
     return issues
+
+
+def _stand_in_support(result: AnalystResult, verdict: str, name: str, results) -> list[Issue]:
+    """A stand-in must be one of factor_queries.stand_in_pool: his position, below him on
+    the depth chart, able to play; a confident pick far behind the pool's leader is blocked."""
+    subject = result.player
+    roster = tuple(result.user_context.roster_names) if result.user_context else ()
+    pool = factor_queries.stand_in_pool(subject, results, roster)
+    if not pool:
+        return []
+    names = [n for n, _, _ in pool]
+    mine = next(((n, v) for n, v, _ in pool if same_player(n, name)), None)
+    if mine is None:
+        options = ", ".join(names[:3])
+        return [Issue("verdict_support", "answer", verdict,
+                      f"{name} is not a {subject.position} below {subject.name} on the {subject.team} depth chart "
+                      f"who can play; the stand-ins are {options}.")]
+    top, top_value, what = pool[0]
+    action = _action(verdict) or ""
+    unit = "%" if "share" in what else f" {what}"
+    if action in CONFIDENT_ACTIONS and not same_player(top, name) and top_value is not None \
+            and (mine[1] is None or mine[1] < top_value / 2) and not mentioned(top, result.answer):
+        return [Issue("verdict_support", "answer", verdict,
+                      f"{top} has the most {what} among the {subject.position}s below {subject.name} "
+                      f"({_fmt(top_value)}{unit}), against {mine[0]}'s {_fmt(mine[1])}{unit}: recommend {top}.")]
+    return []
 
 
 # --- b) every number comes from the rows or the facts code computed from them ---

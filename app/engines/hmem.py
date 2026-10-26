@@ -27,6 +27,7 @@ import dataclasses
 import json
 import math
 import re
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -212,6 +213,16 @@ class TrustLedgerService:
 # --- store with enrichment (spec sections 2, 3, 5) ---
 
 
+_FILE_LOCKS: dict[str, threading.Lock] = {}
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def _file_lock(path: Path) -> threading.Lock:
+    """One lock per state file (per user)."""
+    with _FILE_LOCKS_GUARD:
+        return _FILE_LOCKS.setdefault(str(path.resolve()), threading.Lock())
+
+
 class MemoryStoreService:
     def __init__(self, clock: Clock, ledger: TrustLedgerService, actor: str, persist_dir: Path | None = None) -> None:
         self.clock, self.ledger, self.actor = clock, ledger, actor
@@ -225,13 +236,24 @@ class MemoryStoreService:
                 self.records[record.id] = record
 
     def persist(self) -> None:
+        """Save to state_file: a unique temp file, then a rename, under a lock per file, so
+        parallel requests for one user never write the same temp file (QA run)."""
         if not self.state_file:
             return
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         records = [dataclasses.asdict(r) for r in sorted(self.records.values(), key=lambda r: r.timestamp)]
-        tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"records": records}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-        tmp.replace(self.state_file)
+        with _file_lock(self.state_file):
+            tmp = self.state_file.with_name(f"{self.state_file.name}.{uuid.uuid4().hex}.tmp")
+            tmp.write_text(json.dumps({"records": records}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+            for attempt in range(10):  # Windows can briefly refuse a rename onto a just-replaced file
+                try:
+                    tmp.replace(self.state_file)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        tmp.unlink(missing_ok=True)
+                        raise
+                    time.sleep(0.02)
 
     def add(
         self, content: str, source: str, *, type: str = "general", layer: str = "working",

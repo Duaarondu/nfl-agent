@@ -250,7 +250,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 480 tests
+pytest           # 510 tests
 ```
 
 The tests cover:

@@ -2,9 +2,12 @@
 
 import pytest
 
+from concurrent.futures import ThreadPoolExecutor
+
 from app import pipeline
-from app.adapters import meterless
-from app.agents import factor_queries
+from app.adapters import meterless, zetaris
+from app.agents import factor_queries, memory
+from app.engines.hmem import HMEM
 from app.agents.analyst import AnalystError
 
 DISCLAIMER = "\n\nInformational only, based on nflverse data; not betting advice."
@@ -198,3 +201,124 @@ def test_no_model_says_so(no_model):
     _, answer = ask("Should I start Jared Goff this week?")
     assert answer.endswith("(Rule-based: no model configured (sample mode).)")
     assert "model call failed" not in answer and "the model recommended" not in answer
+
+
+# --- batch 2: the stand-in is his position, below him on the depth chart, able to play ---
+
+
+@pytest.mark.parametrize("question, lead", [
+    ("Christian McCaffrey is out. Who replaces him?",
+     "Kaelon Black is next at RB on the depth chart (45 carries), so for fantasy: pick up Kaelon Black if available."),
+    ("Lamar Jackson is out. Who is the Ravens' QB?",
+     "Tyler Huntley is next at QB on the depth chart, so for fantasy: pick up Tyler Huntley if available."),
+    ("Who becomes the Bucs' WR1 if Mike Evans is out?",
+     "Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+     "so for fantasy: pick up Deebo Samuel if available."),
+    ("Who replaces Chris Godwin?",
+     "Ted Hurst III is next at WR on the depth chart (14.6% recent target share), "
+     "so for fantasy: pick up Ted Hurst III if available."),
+])
+def test_replacement_is_the_next_player_at_his_position(no_model, question, lead):
+    run, answer = ask(question)
+    assert answer.startswith(lead) and run.approved
+    assert "Kittle" not in answer.split(". ")[0] and "Egbuka" not in answer.split(". ")[0]
+
+
+# --- batch 2: status questions come from the injury report ---
+
+
+@pytest.mark.parametrize("question, opening", [
+    ("Is Kyle Monangai playing this week?", "No: Kyle Monangai is listed Out for week 7 (thumb)."),
+    ("Is Davante Adams out?", "Yes: Davante Adams is on reserve (RES)."),
+])
+def test_status_questions_use_the_injury_report(no_model, question, opening):
+    run, answer = ask(question)
+    assert run.result.question_type == "status" and answer.startswith(opening)
+    assert "Source: the week 7 injury report and the rosters table." in answer
+
+
+# --- batch 2: scoring phrases ---
+
+
+@pytest.mark.parametrize("text, scoring", [
+    (".5 ppr league", "half"), ("I'm in a .5ppr league", "half"), ("1/2 ppr", "half"), ("we're in half", "half"),
+    ("half point per catch", "half"), ("we play PPR", "ppr"), ("we switched to PPR", "ppr"),
+    ("We switched from half-PPR to full PPR", "ppr"), ("standard, should I start Derrick Henry?", "standard"),
+    ("is he a standard WR3?", None),
+])
+def test_scoring_phrases(text, scoring):
+    assert memory.scoring_in(text) == scoring
+
+
+def test_one_half_ppr_question_quotes_half_ppr(no_model):
+    _, answer = ask("1/2 ppr, should I start Bijan Robinson?")
+    assert "half-PPR per game; he averages 19.7" in answer
+
+
+def test_te_premium_says_standard_rules_apply(no_model):
+    _, answer = ask("TE premium league: should I start Trey McBride?")
+    assert answer.endswith("Note: TE premium is not modelled; this answer uses standard scoring rules for it.")
+
+
+# --- batch 2: premise checks ---
+
+
+def test_the_opponent_is_not_a_wrong_team(no_model):
+    run, answer = ask("Should I start CeeDee Lamb against PHI?")
+    assert run.result.premise_correction is None and answer.startswith("Start CeeDee Lamb.")
+
+
+def test_a_false_bye_claim_is_corrected_and_the_other_player_answered(no_model):
+    run, _ = ask("Jalen Hurts is on bye, should I start Jared Goff?")
+    assert run.result.player.name == "Jared Goff"
+    assert run.result.premise_correction == "Jalen Hurts is not on bye in week 7: PHI plays DAL."
+
+
+@pytest.mark.parametrize("question, team", [("Should I start Mike Evans on TB?", "SF"),
+                                            ("Should I start Puka Nacua for Los Angeles?", None)])
+def test_team_codes_and_los_angeles(no_model, question, team):
+    run, _ = ask(question)
+    note = run.result.premise_correction
+    assert (note is not None and f"Mike Evans is on {team}" in note) if team else note is None
+
+
+# --- batch 2: start/sit is about the player asked about; the backing is his ---
+
+
+def test_start_sit_answers_the_player_asked_about(no_model):
+    run, answer = ask("I have Dalton Kincaid. Should I start Trey McBride?")
+    assert run.result.player.name == "Trey McBride" and answer.startswith("Start Trey McBride.")
+    assert "Team usage (strong): Trey McBride's recent target share is 24.1%" in answer
+
+
+def test_most_supported_lists_only_the_picks_factors(no_model):
+    _, answer = ask("Should I start bucky irving or Jonathan Taylor")
+    assert answer.startswith("Start Jonathan Taylor over Bucky Irving. Most supported by the data for Jonathan Taylor: "
+                             "Recent trend (moderate): Jonathan Taylor: 21.2 PPR points per game")
+    supported = answer.split("Not supported:")[0]
+    assert "Bucky Irving:" not in supported
+
+
+def test_team_usage_is_rated_on_his_own_share():
+    results = {"Team usage": (["player_display_name", "recent_target_share_pct"], [["A B", "30"], ["C D", "9"]])}
+    assert factor_queries.rule_rating("Team usage", results)[0] == "strong"
+    assert factor_queries.rule_rating("Team usage", results, "C D")[0] == "weak"
+
+
+# --- batch 2: concurrency ---
+
+
+def test_parallel_sample_queries(real_sample):
+    sql = "SELECT COUNT(*) AS n FROM NFLVERSE.player_stats"
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda _: zetaris.run_sql(sql), range(32)))
+    assert len({str(r["data"]) for r in results}) == 1
+
+
+def test_parallel_hmem_saves_use_unique_temp_files(tmp_path):
+    mem = HMEM(clock=lambda: 1_750_000_000_000, persist_dir=tmp_path / "store", ledger_path=tmp_path / "ledger.jsonl")
+    mem.add("12-team half-PPR league.", "test")
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda _: mem.store.persist(), range(32)))
+    assert (tmp_path / "store" / "state.json").is_file()
+    assert not list((tmp_path / "store").glob("*.tmp"))

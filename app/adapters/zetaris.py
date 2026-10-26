@@ -167,7 +167,10 @@ def _run_sample(sql: str, limit: int) -> dict[str, Any]:
 
     started = time.perf_counter()
     try:
-        cursor = _sample_connection().execute(sql)
+        # A cursor per call: one shared connection mixed up the answers of parallel requests
+        # and returned a 500 (QA run, 8 parallel requests).
+        cursor = _sample_connection().cursor()
+        cursor.execute(sql)
         rows = cursor.fetchmany(limit)
     except duckdb.Error as error:
         raise ZetarisError(f"Sample query failed: {error}") from error

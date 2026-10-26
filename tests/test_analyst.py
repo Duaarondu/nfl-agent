@@ -281,11 +281,13 @@ def test_failed_verdict_falls_back_to_rules(real_sample, model, trace_dir, failu
 def test_rule_based_replacement_verdict_names_the_stand_in(real_sample, model):
     script(model, classify("Mike Evans", "replacement"), answer=meterless.MeterlessError("down"))
     result = analyze(BUCS)
-    # Kittle's 24.9% recent target share beats Samuel's 11.1%; the depth chart's pick is still named.
-    # The literal answer (the depth chart) first, then the fantasy advice (target share).
-    assert result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to George Kittle (24.9%), so for fantasy: pick up George Kittle if available.")
-    assert "George Kittle (TE) has the top recent target share among his teammates (24.9%)." in result.answer
-    assert "The depth chart lists" not in result.answer  # said once, in the lead
+    # The stand-in is a WR below Evans who can play (QA run: TE Kittle was picked on target share).
+    # The literal answer (the depth chart) first, then the fantasy advice.
+    assert result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+                                    "so for fantasy: pick up Deebo Samuel if available.")
+    assert "Deebo Samuel has the most recent target share among the WRs below Mike Evans on the depth chart (11.1%)." \
+        in result.answer
+    assert "Kittle" not in result.answer.split(".")[0]
 
 
 def test_thinking_and_fences_are_ignored(real_sample, model):
@@ -614,13 +616,14 @@ def test_first_verdict_gets_hard_rules_for_a_replacement(real_sample, model):
     assert "- Never recommend picking up Christian McCaffrey: already on the user's roster." in rules
     assert '- The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.' in rules
     assert "Mike Evans WR" in rules and "George Kittle TE" in rules and "Christian McCaffrey RB" in rules
-    assert ('- The usage numbers back George Kittle (24.9%) among players not on the roster: recommend him '
-            '("Pick up George Kittle").') in rules
+    assert ('- The numbers back Deebo Samuel: Deebo Samuel has the most recent target share among the WRs below '
+            'Mike Evans on the depth chart not already on your roster (11.1%). Recommend him ("Pick up Deebo Samuel"), '
+            'a WR like Mike Evans.') in rules
 
 
 def test_replacement_hard_rule_names_the_codes_pick_off_the_roster(real_sample, model):
-    # Runs 6b5c3a81c4f9 and 76385bffb53c (Kittle on the roster) recommended Kittle, then Samuel,
-    # and ended unresolved: the prompt never named the pick the critic wanted.
+    # Runs 6b5c3a81c4f9 and 76385bffb53c (Kittle on the roster) ended unresolved: the prompt never
+    # named the pick the critic wanted. Now the pick is a WR below Evans, never RB McCaffrey (QA run).
     from app.agents.memory import RosterPlayer, UserContext
 
     script(model, classify("Mike Evans", "replacement"), answer=verdict("Pick up Christian McCaffrey", "22.8%."))
@@ -628,8 +631,8 @@ def test_replacement_hard_rule_names_the_codes_pick_off_the_roster(real_sample, 
                          roster=[RosterPlayer("00-0033288", "George Kittle", "SF", "TE")])
     analyze(BUCS, memory=memory)
     [call] = calls_for(model, analyst.VERDICT_PROMPT)
-    assert ('- The usage numbers back Christian McCaffrey (22.8%) among players not on the roster: recommend '
-            'him ("Pick up Christian McCaffrey").') in call[1]["content"]
+    assert 'Recommend him ("Pick up Deebo Samuel"), a WR like Mike Evans.' in call[1]["content"]
+    assert 'Pick up Christian McCaffrey' not in call[1]["content"]
 
 
 def test_why_verdict_hard_rule_names_the_player(real_sample, model):

@@ -57,9 +57,14 @@ short statement like "12-team league", "half-PPR scoring", "My WR is Davante Ada
 "I dropped Mike Evans". Reply [] if there are none."""
 
 TEAMS = re.compile(r"\b(\d{1,2})[- ]team\b", re.I)
-HALF = re.compile(r"\bhalf[- ]?(?:point[- ]?)?(?:ppr|point)\b|\b0?\.5[- ]?ppr\b", re.I)
-STANDARD = re.compile(r"\bnon[- ]?ppr\b|\bstandard(?=[- ](?:scoring|league|format))|\b\d{1,2}[- ]team standard\b", re.I)
-FULL = re.compile(r"\bfull[- ]?ppr\b|\b\d{1,2}[- ]team ppr\b|\bppr (?:league|scoring|format)\b|\b(?:league|scoring) is ppr\b", re.I)
+# ".5 ppr", ".5ppr", "1/2 ppr", "in half", "half point" (QA run: all missed).
+HALF = re.compile(r"\bhalf[- ]?(?:point[- ]?)?(?:ppr|point)\b|(?<![\w.])0?\.5[- ]?ppr\b|\b1/2[- ]?(?:point[- ]?)?ppr\b"
+                  r"|\bin (?:a )?half(?:[- ]ppr)?(?: league)?\b(?! the)", re.I)
+STANDARD = re.compile(r"\bnon[- ]?ppr\b|\bstandard\b(?!\s+(?:qb|rb|wr|te|flex|starter)s?\d*\b)", re.I)  # not "a standard WR3"
+FULL = re.compile(r"\bfull[- ]?ppr\b|\b\d{1,2}[- ]team ppr\b|\bppr (?:league|scoring|format)\b|\b(?:league|scoring) is ppr\b"
+                  r"|\b(?:we|i) play (?:full[- ])?ppr\b|\bswitched to (?:full[- ])?ppr\b", re.I)
+# "switched from half-PPR to full PPR": the scoring after "to" is the league's now.
+SWITCH = re.compile(r"\bswitch(?:ed|ing)?\b[^.;?!]*?\bto\s+(?P<to>[^.;?!,]+)", re.I)
 CUES = re.compile(r"\b(?:my|our) (?:league|team|roster|scoring|bench|(?:starting )?lineup|qbs?|rbs?|wrs?|tes?)\b"
                   r"|\bppr\b|\bleague\b|\bdropped\b", re.I)
 _POS = r"(?:QB|RB|WR|TE|FLEX)s?"
@@ -135,6 +140,23 @@ def user_context_from_dict(data: dict[str, Any] | None) -> UserContext | None:
 # --- facts mined from the question ---
 
 
+def scoring_in(text: str) -> str | None:
+    """"half", "standard" or "ppr" from the text, the target of a switch first."""
+    switch = SWITCH.search(text)
+    if switch:
+        to = switch.group("to")
+        found = scoring_in(to.replace("switch", "")) or ("ppr" if re.search(r"\bppr\b", to, re.I) else None)
+        if found:
+            return found
+    if HALF.search(text):
+        return "half"
+    if STANDARD.search(text):
+        return "standard"
+    if FULL.search(text):
+        return "ppr"
+    return None
+
+
 @dataclass
 class Fact:
     kind: str  # "teams", "scoring", "roster" or "drop"
@@ -148,12 +170,9 @@ def mine_facts(text: str) -> list[Fact]:
     m = TEAMS.search(text)
     if m:
         facts.append(Fact("teams", m.group(1)))
-    if HALF.search(text):
-        facts.append(Fact("scoring", "half"))
-    elif STANDARD.search(text):
-        facts.append(Fact("scoring", "standard"))
-    elif FULL.search(text):
-        facts.append(Fact("scoring", "ppr"))
+    scoring = scoring_in(text)
+    if scoring:
+        facts.append(Fact("scoring", scoring))
     roster = _names_after(ROSTER_CUE, text)
     spots = [LEADING_VERB.sub("", m.group("name")) for m in SPOT_CUE.finditer(text)]
     roster += [n for n in spots if n and n.split()[0].lower() not in NOT_NAMES]

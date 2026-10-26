@@ -179,8 +179,8 @@ def test_answer_uses_half_ppr_and_skips_the_rostered_player(real_sample, memory_
 
     usage = next(q for q in run.result.queries if q.factor == "Team usage")
     assert "AVG((fantasy_points + fantasy_points_ppr) / 2), 1) AS half_ppr_per_game" in usage.sql
-    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey if available.")
-    assert "among his teammates not already on your roster (22.8%)" in run.result.answer
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: pick up Deebo Samuel if available.")  # a WR below Evans, not RB McCaffrey (QA run)
+    assert "WRs below Mike Evans on the depth chart not already on your roster (11.1%)" in run.result.answer
     assert run.approved
     assert [l["action"] for l in read_trace(trace_dir) if l["agent_name"] == "memory"][-2:] == ["store", "retrieve"]
 
@@ -189,13 +189,13 @@ def test_session_one_question_is_about_the_player_who_is_out(real_sample, memory
     all_fail(model)  # no model name for the player: the lookup must not pick rostered Kittle
     run = pipeline.answer(f"{SESSION_1}. {BUCS}", user_id="u1", model_review=False)
     assert run.result.player.name == "Mike Evans"
-    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey if available.")
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), so for fantasy: pick up Deebo Samuel if available.")
 
 
 def test_verdict_prompt_carries_the_memory(real_sample, memory_dir, model):
     memory.store("u1", SESSION_1, "run0", miner_fn=None)
-    replies = {"verdict": json.dumps({"verdict": "Pick up Christian McCaffrey",
-                                      "why": "His 22.8% recent target share is the top among players you do not have."})}
+    replies = {"verdict": json.dumps({"verdict": "Pick up Deebo Samuel",
+                                      "why": "His 11.1% recent target share is the top among the WRs below Evans."})}
 
     def respond(messages):
         system = messages[0]["content"]
@@ -258,18 +258,19 @@ def test_check_f_standard_league_flags_any_ppr():
     assert not critic.check_user_context(bucs_with("Pick up Christian McCaffrey. 12.1 standard points.", ctx))
 
 
-def test_check_a_ignores_rostered_teammates():
-    # McCaffrey trails Kittle 24.9% -- but Kittle is already on the roster, so he is not an option.
-    result = bucs_with("Pick up Christian McCaffrey. His recent target share is 22.8%.", HALF_CTX)
+def test_check_a_wants_a_wr_below_evans():
+    # QA run: RB McCaffrey was the pick once TE Kittle was rostered. The stand-in is a WR below Evans.
+    result = bucs_with("Pick up Deebo Samuel. His recent target share is 11.1%.", HALF_CTX)
     assert not critic.check_verdict_support(result)
-    result.user_context = None
-    assert critic.check_verdict_support(result)
+    result = bucs_with("Pick up Christian McCaffrey. His recent target share is 22.8%.", HALF_CTX)
+    [issue] = critic.check_verdict_support(result)
+    assert "is not a WR below Mike Evans" in issue.reason and "Deebo Samuel" in issue.reason
 
 
 def test_critic_sends_a_rostered_pickup_back(real_sample, memory_dir, model):
     memory.store("u1", SESSION_1, "run0", miner_fn=None)
     verdicts = [json.dumps({"verdict": "Pick up George Kittle", "why": "His 24.9% recent target share leads."}),
-                json.dumps({"verdict": "Pick up Christian McCaffrey", "why": "His 22.8% recent target share is next."})]
+                json.dumps({"verdict": "Pick up Deebo Samuel", "why": "His 11.1% recent target share leads the WRs below Evans."})]
 
     def respond(messages):
         system, user = messages[0]["content"], messages[-1]["content"]
@@ -284,8 +285,9 @@ def test_critic_sends_a_rostered_pickup_back(real_sample, memory_dir, model):
     model.respond = respond
     run = pipeline.answer(BUCS, user_id="u1", model_review=False)
     assert [c.status for c in run.critiques] == ["needs_revision", "approved"]
-    assert {i.check for i in run.critiques[0].blocking} == {"user_context"}
-    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart, but the target share points to Christian McCaffrey (22.8%), so for fantasy: pick up Christian McCaffrey.")
+    assert "user_context" in {i.check for i in run.critiques[0].blocking}
+    assert run.result.answer.startswith("Deebo Samuel is next at WR on the depth chart (11.1% recent target share), "
+                                        "so for fantasy: pick up Deebo Samuel.")
 
 
 def test_saved_runs_without_memory_still_load():

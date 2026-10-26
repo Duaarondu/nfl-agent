@@ -157,7 +157,7 @@
     "live_examples": "scripts/try_pipeline.py --live [--user ID] \"question\"",
     "critic_demo": "scripts/demo_critic.py",
     "docker": "Dockerfile (exposes 8000 and 8080)",
-    "tests": "pytest (480 tests)",
+    "tests": "pytest (510 tests)",
     "ci": ".github/workflows/ci.yml"
   },
   "traces": {

@@ -119,7 +119,8 @@ def test_rule_verdict_never_picks_up_the_player_who_is_out(real_sample):
     # Evans leads the 49ers in target share, so the waiver rule alone says "Pick up Mike Evans".
     assert fq.rule_verdict("waiver", evans, results, [])[0] == "Pick up Mike Evans"
     verdict, _ = fq.rule_verdict("waiver", evans, results, [], out=True)
-    assert verdict == "Pick up George Kittle if available"
+    # With no depth chart rows, the stand-in is a WR from the usage rows, not TE Kittle (QA run).
+    assert verdict == "Pick up Deebo Samuel Sr. if available"
 
 
 def test_plan_picks_bundle_by_question_type():
@@ -250,13 +251,17 @@ def test_games_without_when_he_never_missed(real_sample):
 
 def test_rule_verdicts(real_sample):
     nacua, results = without_results("Puka Nacua")
+    for q in fq.team_bundle(nacua, SEASON, WEEK):
+        r = run_sql(q.sql)
+        results[q.factor] = (r["headers"], r["data"])
     ranked = [("Games without the player", "moderate", "He missed 2 team games this season. More.")]
     verdict, why = fq.rule_verdict("replacement", nacua, results, ranked)
-    assert verdict == "Pick up Davante Adams if available"
+    # A WR below Nacua who can play: not Davante Adams, who is on reserve (RES; QA run).
+    assert verdict == "Pick up Konata Mumpfield if available"
     assert why == (
         "Most supported by the data: Games without the player (moderate): He missed 2 team games this season. "
-        "Davante Adams had the top target share (29.9%) in the games Puka Nacua missed. "
-        "He averages 30.1 PPR points per game in those games."
+        "Konata Mumpfield has the most recent target share among the WRs below Puka Nacua on the depth chart (9.4%). "
+        "He averages 5.3 PPR points per game this season."
     )
 
     usage = fq.team_bundle(WATSON, SEASON, WEEK)[1]

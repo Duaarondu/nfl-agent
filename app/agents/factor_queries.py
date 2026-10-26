@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from typing import Any
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
-QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "compare", "other", "unsupported")
+QUESTION_TYPES = ("why", "replacement", "start_sit", "waiver", "compare", "other", "unsupported", "status")
+# "is Kyle Monangai playing sunday", "Is X out?": answered from the injury report (QA run).
+STATUS_CUE = re.compile(r"^\s*(?:is|will)\b.+\b(?:playing|play|out|active|healthy|injured|available|suiting up)\b"
+                        r"|\binjury (?:status|report)\b", re.I)
 MAX_NAME_CANDIDATES = 60
 WHY_FACTORS = (
     "Opportunity", "Teammate absences", "Team pass rate and game script",
@@ -42,7 +45,7 @@ TEAM_NAMES: dict[str, tuple[str, ...]] = {
     "IND": ("colts", "indianapolis"),
     "JAX": ("jaguars", "jags", "jacksonville"),
     "KC": ("chiefs", "kansas city"),
-    "LA": ("rams",),
+    "LA": ("rams", "los angeles"),
     "LAC": ("chargers",),
     "LV": ("raiders", "las vegas"),
     "MIA": ("dolphins", "miami"),
@@ -159,7 +162,7 @@ def unsupported_message(topic: str) -> str:
 
 
 # "is X startable", "X @ DAL too tempting?", "is PHI a good matchup for X", "X worth a flex" (QA run).
-START_CUE = re.compile(r"\b(?:start|sit|bench|flex|startable|too tempting|good matchup|bad matchup|play him)\b"
+START_CUE = re.compile(r"\b(?:start|sit|bench|flex|startable|too tempting|good matchup|bad matchup|play him|should i play)\b"
                        r"|\s@\s*[A-Z]|\bworth a (?:flex|start)\b", re.I)
 DROP_CUE = re.compile(r"\b(?:drop|cut|release)\b|\bshould i (?:hold|keep)\b", re.I)
 WAIVER_CUE = re.compile(r"\b(?:pick (?:him )?up|waivers?|add|adding|worth a pickup|must[- ]add|stash)\b", re.I)
@@ -170,6 +173,8 @@ def guess_question_type(question: str) -> str:
     text = question.lower()
     if unsupported_topic(question):
         return "unsupported"
+    if STATUS_CUE.search(question) and not START_CUE.search(question.replace("play", "")):
+        return "status"
     if is_why_question(text):
         return "why"
     if is_compare_question(question):
@@ -474,6 +479,7 @@ def teams_mentioned(question: str) -> list[str]:
     found = []
     for code, names in TEAM_NAMES.items():
         positions = [m.start() for n in names for m in re.finditer(rf"\b{re.escape(n)}\b", text)]
+        positions += [m.start() for m in re.finditer(rf"\b{code}\b", question)]  # "KC", "TB": capitals only
         if positions:
             found.append((min(positions), code, names))
     return [code for _, code, _ in sorted(found)]
@@ -488,11 +494,16 @@ def wrong_teams(question: str, player: Player) -> list[str]:
     text = question.lower()
     owned = []
     for code in teams_mentioned(question):
-        for name in TEAM_NAMES[code]:
-            for match in re.finditer(rf"\b{re.escape(name)}\b", text):
-                before = text[max(0, match.start() - 20) : match.start()]
-                if not re.search(r"\b(vs\.?|versus|against|facing|plays|play)\s+(the\s+)?$", before):
-                    owned.append(code)
+        matches = [*(m for name in TEAM_NAMES[code] for m in re.finditer(rf"\b{re.escape(name)}\b", text)),
+                   *re.finditer(rf"\b{code}\b", question)]
+        for match in matches:
+            before = text[max(0, match.start() - 20) : match.start()]
+            after = text[match.end() : match.end() + 30]
+            # An opponent is not a premise: "vs the Bucs", "at the Eagles", "Taylor @ Minnesota",
+            # "is Philadelphia a good matchup for Lamb" (QA run).
+            if not re.search(r"(?:\b(?:vs\.?|versus|against|facing|plays|play|at)|@)\s*(?:the\s+)?$", before) \
+                    and not re.match(r"\s+(?:a\s+)?(?:good\s+|bad\s+|tough\s+|easy\s+)?(?:matchup|defen[cs]e)\b", after):
+                owned.append(code)
     owned = list(dict.fromkeys(owned))
     return [] if player.team in owned else owned
 
@@ -633,11 +644,18 @@ def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> l
         ),
         PlannedQuery(
             "Depth chart",
-            f"{p.team} current {pos} depth chart (pos_rank 1 = top)",
-            "SELECT DISTINCT pos_abb, pos_rank, player_name FROM NFLVERSE.depth_charts "
-            f"WHERE team = {team} AND pos_abb = {_quote(pos)} "
-            f"AND dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = {team}) "
-            "ORDER BY pos_rank LIMIT 25",
+            f"{p.team} current {pos} depth chart (pos_rank 1 = top), with roster status and the week "
+            f"{latest_week + 1} injury report",
+            "SELECT DISTINCT d.pos_abb, d.pos_rank, d.player_name, r.status AS roster_status, "
+            "i.report_status FROM NFLVERSE.depth_charts d "
+            "LEFT JOIN (SELECT gsis_id, MAX(status) AS status FROM NFLVERSE.rosters "
+            f"WHERE season = {season} AND week = (SELECT MAX(week) FROM NFLVERSE.rosters WHERE season = {season}) "
+            "GROUP BY gsis_id) r ON r.gsis_id = d.gsis_id "
+            "LEFT JOIN (SELECT gsis_id, MAX(report_status) AS report_status FROM NFLVERSE.injuries "
+            f"WHERE season = {season} AND week = {latest_week + 1} GROUP BY gsis_id) i ON i.gsis_id = d.gsis_id "
+            f"WHERE d.team = {team} AND d.pos_abb = {_quote(pos)} "
+            f"AND d.dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = {team}) "
+            "ORDER BY d.pos_rank LIMIT 25",
         ),
     ]
     if p.position == "QB":  # his own points per game is the start/sit basis (QA run: "averages n/a")
@@ -1207,7 +1225,9 @@ def _split_gain(ppr: dict[str, float], weeks: set[str]) -> float | None:
     return round(_avg(inside) - _avg(outside), 1)
 
 
-def rule_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -> tuple[str, str]:
+def rule_rating(
+    factor: str, results: dict[str, tuple[list[str], list[list]]], player: str | None = None
+) -> tuple[str, str]:
     """(support, rule) for one factor from fixed thresholds over the query results.
 
     results maps factor name -> (headers, rows) for every planned query, since some
@@ -1245,6 +1265,9 @@ def rule_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]) -
         soft = {w for w, r in zip(t.text("week"), t.col("allowed_rank")) if r is not None and r <= 10}
         gain = _split_gain(ppr, soft)
         return _grade(gain, 5, 2, 0.1), f"{label} per game vs top-10 soft defenses minus the rest: {_fmt(gain)} (strong >= 5, moderate >= 2, weak > 0)"
+    if factor == "Team usage" and player:  # start/sit or waiver: his own share, not the team leader's (QA run)
+        own = _usage(player, results, "recent_target_share_pct")
+        return _grade(own, 20, 15, 0.1), f"{player}'s recent target share {_fmt(own)}% (strong >= 20, moderate >= 15)"
     if factor == "Team usage":
         top = max((x for x in t.col("recent_target_share_pct") if x is not None), default=None)
         return _grade(top, 20, 15, 0.1), f"highest recent target share {_fmt(top)}% (strong >= 20, moderate >= 15)"
@@ -1329,36 +1352,68 @@ def _first_sentence(text: str) -> str:
     return parts[0].rstrip(".") if parts else ""
 
 
+MIN_GAMES = 2  # a stand-in's usage needs at least this many games (QA run: picks rested on one game)
+
+
+def depth_below(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> list[str]:
+    """The depth chart's names ranked below the player (all of them if he is not listed)."""
+    names = _Rows(*results.get("Depth chart", ([], []))).text("player_name")
+    at = next((i for i, n in enumerate(names) if same_player(n, player.name)), -1)
+    return names[at + 1:]
+
+
+def stand_in_pool(
+    player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = ()
+) -> list[tuple[str, float | None, str]]:
+    """(name, value, what) for each player who could take his place, best first: the same
+    position (the depth chart is his position's), ranked below him, not Out or on reserve,
+    not on the user's roster (exclude). RBs are ordered by carries, WRs and TEs by recent
+    target share, QBs by the depth chart; usage from fewer than MIN_GAMES games does not
+    count. QA run: McCaffrey out got Mike Evans, Godwin out got Egbuka (ranked above him)."""
+    d = _Rows(*results.get("Depth chart", ([], [])))
+    unavailable_names = {n for n, roster, report in zip(d.text("player_name"), d.text("roster_status"), d.text("report_status"))
+                         if (report or "").lower() == "out" or roster in UNAVAILABLE_ROSTER}
+    u = _Rows(*results.get("Team usage", ([], [])))
+    # Without a depth chart (the query failed), his position's players in the usage rows.
+    ranked = depth_below(player, results) if d.rows else [
+        n for n, pos in zip(u.text("player_display_name"), u.text("position"))
+        if pos == player.position and not same_player(n, player.name)]
+    below = [n for n in ranked if n not in unavailable_names and not any(same_player(n, x) for x in exclude)]
+    column, what = {"RB": ("carries", "carries"), "QB": (None, "")}.get(
+        player.position, ("recent_target_share_pct", "recent target share"))
+    values = {}
+    if column and column in u.headers:
+        for n, v, g in zip(u.text("player_display_name"), u.col(column), u.col("games")):
+            if v is not None and (g or 0) >= MIN_GAMES:
+                values[n] = v
+    pool = [(n, next((v for x, v in values.items() if same_player(x, n)), None), what) for n in below]
+    return sorted(pool, key=lambda r: -(r[1] if r[1] is not None else -1)) if column else pool
+
+
 def _next_up(
     player: Player, results: dict[str, tuple[list[str], list[list]]], exclude: tuple[str, ...] = ()
 ) -> tuple[str | None, str]:
-    """(stand-in, reason): top target share in games he missed, else top recent target
-    share among his teammates, else the next name on the depth chart.
-
-    Players in exclude (already on the user's roster) are skipped.
-    """
-    skip = lambda name: same_player(name, player.name) or any(same_player(name, x) for x in exclude)
-    d = _Rows(*results.get("Depth chart", ([], [])))
-    depth = [n for n in d.text("player_name") if not skip(n)]
-    t = _Rows(*results.get("Games without the player", ([], [])))
-    names = t.text("player_display_name")
-    missed = [i for i, s in enumerate(t.text("player_status")) if s == "missed" and not skip(names[i])]
-    if missed:
-        share = t.col("avg_target_share_pct")
-        best = max(missed, key=lambda i: share[i] or 0)
-        name = t.text("player_display_name")[best]
-        reason = f"{name} had the top target share ({_fmt(share[best])}%) in the games {player.name} missed."
-        return name, reason + _per_game(t, best, "in those games")
+    """(stand-in, reason): the top of stand_in_pool. Players in exclude (already on the
+    user's roster) are skipped."""
+    pool = stand_in_pool(player, results, exclude)
+    if not pool:
+        return None, ""
+    name, value, what = pool[0]
+    pos = player.position
+    below = depth_below(player, results)
+    nxt = below[0] if below else None
+    if value is None:
+        return name, f"{name} is the next {pos} below {player.name} on the depth chart who can play."
+    unit = "%" if "share" in what else f" {what}"
+    among = f"{pos}s below {player.name} on the depth chart" + (" not already on your roster" if exclude else "")
+    reason = f"{name} has the most {what} among the {among} ({_fmt(value)}{unit})."
     u = _Rows(*results.get("Team usage", ([], [])))
-    recent = u.col("recent_target_share_pct")
-    others = [i for i, n in enumerate(u.text("player_display_name")) if not skip(n) and recent[i] is not None]
-    if others:
-        best = max(others, key=lambda i: recent[i])
-        name, pos = u.text("player_display_name")[best], u.text("position")[best]
-        among = "his teammates not already on your roster" if exclude else "his teammates"
-        reason = f"{name} ({pos}) has the top recent target share among {among} ({_fmt(recent[best])}%)."
-        return name, reason + _per_game(u, best, "this season")  # replacement_lead names the depth chart's pick
-    return (depth[0], f"{depth[0]} is next on the depth chart.") if depth else (None, "")
+    row = next((i for i, n in enumerate(u.text("player_display_name")) if same_player(n, name)), None)
+    if row is not None:
+        reason += _per_game(u, row, "this season")
+    if nxt and not same_player(nxt, name):
+        reason += f" {nxt} is next on the depth chart."
+    return name, reason
 
 
 def _per_game(t: _Rows, i: int, when: str) -> str:
@@ -1400,20 +1455,21 @@ def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[li
     George Kittle (24.9%), so for fantasy: pick up George Kittle if available."
     None without a depth chart row to answer from.
     """
-    d = _Rows(*results.get("Depth chart", ([], [])))
-    depth = [n for n in d.text("player_name") if not same_player(n, player.name)]
+    depth = depth_below(player, results)  # next = the first ranked below him, not the top of the chart
     if not depth:
         return None
     advice = verdict.strip().rstrip(".")
     advice = advice[:1].lower() + advice[1:]
     m = re.match(r"(?:pick up|add|start)\s+(.+?)(?:\s+if available)?$", advice, re.I)
     pick = m.group(1) if m else None
-    share = _usage(pick, results, "recent_target_share_pct") if pick else None
+    pool = {n: (v, what) for n, v, what in stand_in_pool(player, results)}
+    value, what = next(((v, w) for n, (v, w) in pool.items() if pick and same_player(n, pick)), (None, ""))
+    shown = (f"{_fmt(value)}%" if "share" in what else f"{_fmt(value)} {what}") if value is not None else None
     lead = f"{depth[0]} is next at {player.position} on the depth chart"
     if pick and same_player(pick, depth[0]):
-        lead += f" ({_fmt(share)}% recent target share)" if share is not None else ""
-    elif pick:
-        lead += f", but the target share points to {pick}" + (f" ({_fmt(share)}%)" if share is not None else "")
+        lead += f" ({shown} {what})" if shown and "share" in what else f" ({shown})" if shown else ""
+    elif pick and shown:
+        lead += f", but the {what} points to {pick} ({shown})"
     return f"{lead}, so for fantasy: {advice}."
 
 
@@ -1501,6 +1557,51 @@ def on_bye(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
             if week and not opp}
 
 
+def status_verdict(
+    player: Player, results: dict[str, tuple[list[str], list[list]]], question: str = ""
+) -> tuple[str, str]:
+    """"No: he is listed Out for week 7 (thumb)" from the injury report and roster status;
+    "Is X out?" gets "Yes" for the same facts."""
+    asks_out = re.search(r"\b(?:out|injured|hurt|inactive)\b", question, re.I) is not None
+    week = _week(results)
+    away = next((r for n, r in unavailable(results).items() if same_player(n, player.name)), None)
+    t = _Rows(*results.get("Status", ([], [])))
+    entry = next((i for i, w in enumerate(t.text("week")) if w == week), None)
+    practice = t.text("practice_status")[entry] if entry is not None else ""
+    report = t.text("report_status")[entry] if entry is not None else ""
+    source = f"Source: the week {week} injury report and the rosters table."
+    if away:
+        return f"{'Yes' if asks_out else 'No'}: {player.name} {away}", f"{source} Sit {player.name}."
+    status = f"listed {report} for week {week}" if report else f"has no game status on the week {week} injury report"
+    detail = f" ({practice})" if practice else ""
+    lead = "Probably not" if report in ("Doubtful",) else "Questionable" if report == "Questionable" else "Yes"
+    lead = {"Yes": "No", "Probably not": "Probably"}.get(lead, lead) if asks_out else lead
+    return f"{lead}: {player.name} {status}{detail}", source
+
+
+def _line_for(text: str, name: str) -> str:
+    """The summary sentence about this player ("Bijan Robinson: 6 games, ..."), else the first."""
+    full, last = name_key(name), name_key(name).split()[-1:]
+    parts = sentences(text)
+    for s in parts:  # the full name first: "Kyren Williams", not "Javonte Williams"
+        if full and full in name_key(s):
+            return s.rstrip(".")
+    for s in parts:
+        if last and re.search(rf"\b{re.escape(last[0])}\b", name_key(s)):
+            return s.rstrip(".")
+    return _first_sentence(text)
+
+
+def _backing(pick: str, ranked: list[tuple[str, str, str]], favours: dict[str, str | None], ruled_out: list[str]) -> str:
+    """"Most supported by the data for <pick>: ..." with only the factors that favour him (QA run:
+    the list quoted the other player's lines)."""
+    mine = [(f, s, text) for f, s, text in ranked
+            if s in ("strong", "moderate") and favours.get(f) and same_player(str(favours[f]), pick)]
+    reasons = "; ".join(f"{f} ({s}): {_line_for(text, pick)}" for f, s, text in mine[:3])
+    why = f"Most supported by the data for {pick}: {reasons}." if reasons else f"No factor strongly favours {pick}."
+    return why + (f" Not supported: {', '.join(ruled_out)}." if ruled_out else "")
+
+
 def _week(results: dict[str, tuple[list[str], list[list]]]) -> str:
     return (_Rows(*results.get("Next matchup", ([], []))).text("game_week") or ["the next"])[0]
 
@@ -1529,7 +1630,7 @@ def _row_name(name: str, by_name: dict[str, Any]) -> str:
 def rule_verdict(
     question_type: str, player: Player, results: dict[str, tuple[list[str], list[list]]],
     ranked: list[tuple[str, str, str]], roster: tuple[str, ...] = (), out: bool = False,
-    players: list[Player] | None = None, question: str = "",
+    players: list[Player] | None = None, question: str = "", favours: dict[str, str | None] | None = None,
 ) -> tuple[str, str]:
     """(verdict, why) from fixed rules; ranked is (factor, support, summary), most supported first.
 
@@ -1538,7 +1639,10 @@ def rule_verdict(
     stand-in rule (as for a replacement question) picks who to add instead.
     """
     backed = [(f, s, text) for f, s, text in ranked if s in ("strong", "moderate")]
-    reasons = "; ".join(f"{f} ({s}): {_first_sentence(text)}" for f, s, text in backed[:3])
+    own = _usage(player, results, "recent_target_share_pct") if question_type in ("start_sit", "waiver") else None
+    own_line = f"{player.name}'s recent target share is {_fmt(own)}%" if own is not None else None
+    reasons = "; ".join(f"{f} ({s}): {own_line if f == 'Team usage' and own_line else _line_for(text, player.name)}"
+                        for f, s, text in backed[:3])
     why = f"Most supported by the data: {reasons}." if reasons else "No factor is strongly supported by the data."
     ruled_out = [f for f, s, _ in ranked if s == "not supported"]
     if ruled_out:
@@ -1552,8 +1656,12 @@ def rule_verdict(
             return verdict, _with_matchup(f"{why} {rule}", results)
         verdict, why = rule_verdict("start_sit", player, results, ranked)
         return f"{unsupported_message(topic)} For week {_week(results)} only: {verdict[:1].lower()}{verdict[1:]}", why
+    if question_type == "status":
+        return status_verdict(player, results, question)
     if question_type == "compare" and players and len(players) >= 2:
         verdict, rule = compare_verdict(players, results)
+        if favours is not None and verdict.startswith("Start "):
+            why = _backing(verdict.removeprefix("Start ").split(" over ")[0], ranked, favours, ruled_out)
         why += f" {rule}"
         why = _with_matchup(why, results)
     elif question_type == "replacement" or (out and question_type in ("start_sit", "waiver")):

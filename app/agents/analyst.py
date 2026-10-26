@@ -30,7 +30,7 @@ from typing import Any
 from app.adapters import meterless
 from app.adapters.zetaris import ZetarisError, run_sql
 from app.agents import directions, factor_queries, planner
-from app.agents.memory import UserContext, user_context_from_dict
+from app.agents.memory import UserContext, scoring_in, user_context_from_dict
 from app.trace import new_run_id, trace
 
 AGENT_NAME = "analyst"
@@ -272,6 +272,7 @@ class Plan:
     queries: list[QueryRecord] = field(default_factory=list)
     wrong_teams: list[str] = field(default_factory=list)
     players: list[factor_queries.Player] = field(default_factory=list)  # compare: both players, question order
+    bye_claims: list[str] = field(default_factory=list)  # "Jalen Hurts is not on bye in week 7: PHI plays DAL."
     last_names: list[factor_queries.LastName] = field(default_factory=list)  # resolved from a last name only
 
     def name_note(self) -> str | None:
@@ -285,6 +286,10 @@ class Plan:
         return factor_queries.corrected_question(question, self.wrong_teams, self.player.team)
 
     def premise_note(self) -> str | None:
+        note = self._team_note()
+        return " ".join(n for n in (note, *self.bye_claims) if n) or None
+
+    def _team_note(self) -> str | None:
         if not (self.player and self.wrong_teams):
             return None
         if len(self.players) > 1:
@@ -315,7 +320,9 @@ def analyze(
     context, season, week = _season_context(run_id)
     route = route or planner.plan(run_id, question)
     player_name, question_type = route.player_name, route.question_type
-    scoring = factor_queries.SCORINGS[memory.scoring] if memory else factor_queries.PPR
+    # Without league memory, the question's own scoring ("Bijan or Lamb half ppr") still counts.
+    stated = None if memory else scoring_in(question)
+    scoring = factor_queries.SCORINGS[memory.scoring if memory else stated or "ppr"]
     plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory,
                      player_names=route.player_names)
 
@@ -502,7 +509,8 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
         if head_to_head and q.factor in factor_queries.COMPARE_FACTORS:
             favours, support, rule = factor_queries.compare_rating(q.factor, results)
         else:
-            support, rule = factor_queries.rule_rating(q.factor, results)
+            own = plan.player.name if plan.player and plan.question_type in ("start_sit", "waiver") else None
+            support, rule = factor_queries.rule_rating(q.factor, results, own)
         if wrong:
             rule += f"; model summary replaced: {'; '.join(wrong)}"
         factor = Factor(q.factor, support, _summary(q), _evidence(q), rated_by="rule-based", rule=rule,
@@ -590,6 +598,8 @@ def _verdict(
     reply, failed = None, None
     if question_type == "unsupported":  # the model would answer the trade anyway: the code says what it can
         rule_based = "this question type is not supported, so only the week's numbers are given"
+    if question_type == "status":  # a lookup in the injury report, not a judgement
+        rule_based = "a status question is answered from the injury report"
     if not meterless.configured():
         rule_based = "no model configured (sample mode)"
     if not rule_based:
@@ -603,7 +613,8 @@ def _verdict(
         ranked = [(f.factor, f.support, f.summary) for f in factors]
         roster = memory.roster_names if memory else ()
         verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out,
-                                                   players=players, question=question)
+                                                   players=players, question=question,
+                                                   favours={f.factor: f.favours for f in factors})
         if rule_based == "no model configured (sample mode)":
             note = "(Rule-based: no model configured (sample mode).)"
         else:
@@ -613,7 +624,26 @@ def _verdict(
               step="revise" if revision else "verdict", reason=(rule_based or failed or "")[:300],
               **({"round": round} if revision else {}))
     lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
-    return round_numbers(_with_name_note(_compose(question_type, verdict, why, note, lead), name_note)), by
+    answer = _with_name_note(_compose(question_type, verdict, why, note, lead), name_note)
+    return round_numbers(_with_variant_note(answer, question)), by
+
+
+# Scoring rules the queries do not model (QA run): said, not silently ignored.
+SCORING_VARIANTS = (
+    (re.compile(r"\bte[- ]?prem(?:ium)?\b|\btep\b", re.I), "TE premium"),
+    (re.compile(r"\b6[- ]?(?:pt|point)s?\b.{0,20}\b(?:pass(?:ing)?|qb)\b|\b6[- ]?(?:pt|point)\s+pass", re.I),
+     "6-point passing touchdowns"),
+    (re.compile(r"\bsuper[- ]?flex\b|\bsflex\b", re.I), "superflex"),
+)
+
+
+def _with_variant_note(answer: str, question: str) -> str:
+    found = [name for pattern, name in SCORING_VARIANTS if pattern.search(question or "")]
+    if not found:
+        return answer
+    note = f"Note: {' and '.join(found)} {'is' if len(found) == 1 else 'are'} not modelled; this answer uses standard scoring rules for {'it' if len(found) == 1 else 'them'}."
+    body, sep, tail = answer.partition("\n\n" + DISCLAIMER)
+    return f"{body} {note}{sep}{tail}"
 
 
 def _with_name_note(answer: str, note: str | None) -> str:
@@ -745,13 +775,9 @@ def _backed_pick(
     name, reason = factor_queries._next_up(player, results, roster)
     if not name:
         return []
-    among = " among players not on the roster" if roster else ""
-    share = factor_queries._usage(name, results, "recent_target_share_pct")
-    if "in the games" in reason or share is None:
-        backs = f"The numbers back {name}{among}: {factor_queries._first_sentence(reason)}"
-    else:
-        backs = f"The usage numbers back {name} ({factor_queries._fmt(share)}%){among}"
-    return [f'{backs}: recommend him ("Pick up {name}"). The answer may still say who is next on the depth chart.']
+    backs = f"The numbers back {name}: {factor_queries._first_sentence(reason)}"
+    return [f'{backs}. Recommend him ("Pick up {name}"), a {player.position} like {player.name}. '
+            "The answer may still say who is next on the depth chart."]
 
 
 def _compare_leaders(names: list[str], results: dict[str, tuple[list[str], list[list]]]) -> list[str]:
@@ -1005,6 +1031,7 @@ def _run_plan(
     if not players:
         plan.queries.clear()
         return plan
+    all_players = list(players)
     # "Josh Allen on bye, Goff or Bryce Young?": Allen is context, not an option.
     context = factor_queries.context_players(question, players) if question_type not in ("why", "replacement")         and factor_queries.is_choice(question, players) else []
     if context:
@@ -1039,18 +1066,63 @@ def _run_plan(
                 record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
                 _run_query(run_id, record, action="factor_query")
                 plan.queries.append(record)
+            _check_opponents_and_byes(run_id, question, plan, all_players, season, week, scoring, week_named)
             return plan
 
+    # "Jalen Hurts is on bye, should I start Jared Goff?" is about Goff (QA run answered Hurts).
+    on_bye = _claimed_on_bye(question, players)
+    players = [p for p in players if p not in on_bye] or players
     named = [p for p in players if player_name and p.name.lower() == player_name.lower()]
     not_owned = [p for p in players if not (memory and memory.owns(p.name))]
-    plan.player = (named or not_owned or players)[0]
+    # "I have Josh Allen and Christian Watson. Should I start Christian Watson?" is about
+    # Watson, rostered or not: the player the last sentence names (QA run answered Allen).
+    asked = [p for p in factor_queries.order_in_question(players, question)
+             if question_type in ("start_sit", "waiver", "unsupported") and factor_queries.name_span(
+                 p, factor_queries.sentences(question)[-1] if factor_queries.sentences(question) else question)]
+    plan.player = (named or asked or not_owned or players)[0]
     plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
-    planned_type = "start_sit" if question_type == "unsupported" else question_type
+    planned_type = "start_sit" if question_type in ("unsupported", "status") else question_type
     for planned in factor_queries.plan(planned_type, plan.player, season, week, scoring, week_named):
         record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
         _run_query(run_id, record, action="factor_query")
         plan.queries.append(record)
+    _check_opponents_and_byes(run_id, question, plan, all_players, season, week, scoring, week_named)
     return plan
+
+
+BYE_CLAIM = re.compile(r"\s*(?:'s\s+|\s+is\s+|\s+)?on (?:a |his )?bye\b", re.I)
+
+
+def _claimed_on_bye(question: str, players: list[factor_queries.Player]) -> list[factor_queries.Player]:
+    """The players the question says are on bye ("Hurts on bye", "Jalen Hurts is on bye")."""
+    low = question.lower().replace("\u2019", "'")
+    return [p for p in players if (s := factor_queries.name_span(p, question)) and BYE_CLAIM.match(low, s[1])]
+
+
+def _check_opponents_and_byes(
+    run_id: str, question: str, plan: Plan, players: list[factor_queries.Player], season: int, week: int,
+    scoring: factor_queries.Scoring, week_named: int | None,
+) -> None:
+    """Drop a "wrong team" that is the player's opponent that week ("Lamb at the Eagles"),
+    and correct a false "X is on bye" ("Hurts on bye": PHI plays DAL in week 7). QA run."""
+    results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error and q.factor}
+    t = factor_queries._Rows(*results.get("Next matchup", ([], [])))
+    opponents = set(t.text("opponent"))
+    plan.wrong_teams = [w for w in plan.wrong_teams if w not in opponents]
+    claimed = _claimed_on_bye(question, players)
+    if not claimed:
+        return
+    record = QueryRecord(len(plan.queries) + 1, "", factor_queries.matchup_query(
+        claimed, season, week, scoring, week_named).sql, factor="Bye check")
+    record.purpose = f"{', '.join(p.name for p in claimed)}: is he on bye that week?"
+    _run_query(run_id, record, action="factor_query")
+    if record.error:
+        return
+    plan.queries.append(record)
+    rows = factor_queries._Rows(record.headers, record.rows)
+    for name, team, wk, opp in zip(rows.text("player"), rows.text("team"), rows.text("game_week"), rows.text("opponent")):
+        if opp:
+            plan.bye_claims.append(f"{name} is not on bye in week {wk}: {team} plays {opp}.")
 
 
 def _last_names(

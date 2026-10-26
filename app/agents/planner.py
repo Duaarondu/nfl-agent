@@ -80,6 +80,8 @@ def corrected_type(question: str, question_type: str) -> str:
     "Should I drop X?" is a keep/drop (waiver) question."""
     if factor_queries.unsupported_topic(question):
         return "unsupported"
+    if factor_queries.guess_question_type(question) == "status":
+        return "status"
     if question_type == "other":
         guess = factor_queries.guess_question_type(question)
         return guess if guess in ("start_sit", "waiver") else question_type
