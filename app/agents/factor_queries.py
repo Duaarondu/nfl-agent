@@ -131,6 +131,14 @@ def says_out(question: str, name: str | None = None) -> bool:
     return bool(key) and re.search(rf"\b{re.escape(key[-1])}(?:['’]s)?{more}\s+{OUT_PHRASE}", question, re.I) is not None
 
 
+def also_out(question: str, name: str, subject: Player) -> bool:
+    """Another player the question says is out. A surname the subject shares does not count:
+    "Bijan Robinson is out" is not about Brian Robinson Jr. (QA sweep, 26 October 2026)."""
+    if not question or not says_out(question, name):
+        return False
+    return name_key(name).split()[-1:] != name_key(subject.name).split()[-1:]
+
+
 def replaced_in(question: str, player: Player) -> bool:
     """"Who replaces Mike Evans?" / "replace Evans": the player named right after the verb."""
     span = name_span(player, question)
@@ -1656,8 +1664,12 @@ def stand_in_pool(
     ranked = depth_below(player, results) if d.rows else [
         n for n, pos in zip(u.text("player_display_name"), u.text("position"))
         if pos == player.position and not same_player(n, player.name)]
-    below = [n for n in ranked if n not in unavailable_names and not any(same_player(n, x) for x in exclude)
-             and not (question and says_out(question, n))]  # another player the question says is out
+    def able(names: list[str]) -> list[str]:
+        return [n for n in names if n not in unavailable_names and not any(same_player(n, x) for x in exclude)
+                and not also_out(question, n, player)]
+    below = able(ranked)
+    if not below and d.rows:  # he is last on the chart (QA sweep: "Bauer Sharp is out" got no stand-in)
+        below = able([n for n in d.text("player_name") if not same_player(n, player.name)])
     column, what = {"RB": ("carries", "carries"), "QB": (None, "")}.get(
         player.position, ("recent_target_share_pct", "recent target share"))
     values = {}
@@ -1687,7 +1699,9 @@ def _next_up(
             return name, f"{name} is the top {pos} on the {player.team} depth chart who can play."
         return name, f"{name} is the next {pos} below {player.name} on the depth chart who can play."
     unit = "%" if "share" in what else f" {what}"
-    among = f"{pos}s {_chart_place(player, results)}" + (" not already on your roster" if exclude else "")
+    place = _chart_place(player, results) if any(same_player(name, n) for n in depth_below(player, results)) \
+        else f"on the {player.team} depth chart"
+    among = f"{pos}s {place}" + (" not already on your roster" if exclude else "")
     reason = f"{name} has the most {what} among the {among} ({_fmt(value)}{unit})."
     u = _Rows(*results.get("Team usage", ([], [])))
     row = next((i for i, n in enumerate(u.text("player_display_name")) if same_player(n, name)), None)
@@ -1758,7 +1772,7 @@ def replacement_lead(
         lead = f"{depth[0]} is next at {player.position} on the depth chart"
     else:
         lead = f"{depth[0]} is the top {player.position} on the {player.team} depth chart without {player.name}"
-    if question and depth[0] not in away and says_out(question, depth[0]):
+    if depth[0] not in away and also_out(question, depth[0], player):
         away[depth[0]] = "is out too, as the question says"
     if depth[0] in away:  # QA run: "Deebo Samuel is next ... but the target share points to Cooks"
         lead += f" but {away[depth[0]]}"
@@ -2063,6 +2077,14 @@ def rule_verdict(
         why = _with_matchup(why, results)
     elif question_type == "why":
         verdict = f"Hold {player.name}"
+        if not backed:  # QA sweep: "No factor is strongly supported" opened with no numbers, and the Critic blocked it
+            o = _Rows(*results.get("Opportunity", ([], [])))
+            ppg = _avg(o.col(o.points)) if o.rows else None
+            lead = (f"{player.name} averages {_fmt(ppg)} {o.scoring.label} points per game over "
+                    f"{_count(len(o.rows), 'game')} this season, so there is little scoring to explain."
+                    if ppg is not None else f"{player.name} has played 0 games this season in the data, so there is "
+                    "no scoring to explain.")
+            why = f"{lead} {why}"
     else:
         # An unrecognised question never gets "Hold <player>" (QA run): say what can be answered.
         verdict = f"No call on {player.name}"

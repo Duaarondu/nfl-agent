@@ -273,7 +273,8 @@ def test_rule_verdicts(real_sample):
     assert fq.rule_verdict("start_sit", WATSON, team, [])[0] == "Start Christian Watson"  # 19.8 PPR per game
     assert fq.rule_verdict("waiver", WATSON, team, [])[0].startswith(("Pick up", "Hold off on"))
     assert fq.rule_verdict("why", WATSON, {}, [("Matchups", "not supported", "x")]) == (
-        "Hold Christian Watson", "No factor is strongly supported by the data. Not supported: Matchups.",
+        "Hold Christian Watson", "Christian Watson has played 0 games this season in the data, so there is no "
+        "scoring to explain. No factor is strongly supported by the data. Not supported: Matchups.",
     )
 
 

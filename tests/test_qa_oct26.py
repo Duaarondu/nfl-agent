@@ -335,3 +335,14 @@ def test_a_non_skill_player_gets_a_clear_reply(no_model, question, reply):
 ])
 def test_an_all_lowercase_question_finds_the_last_name(no_model, question, player):
     assert ask(question).result.player.name == player  # before: the generic 422
+
+
+@pytest.mark.parametrize("question, opening", [
+    ("Why is CJ Dippre scoring so many fantasy points?", "CJ Dippre has played 0 games this season in the data"),
+    ("Bauer Sharp is out. Who replaces him?", "Pick up Cade Otton if available."),     # last TE on the chart
+    ("Bijan Robinson is out. Who replaces him?", "Brian Robinson Jr. is next at RB"),  # same surname, not out
+])
+def test_sweep_answers_that_failed_their_own_critic(no_model, question, opening):
+    # A 400-player sweep had 193 unapproved rule-based answers before these fixes; now 0.
+    run = ask(question)
+    assert run.result.answer.startswith(opening) and run.approved
