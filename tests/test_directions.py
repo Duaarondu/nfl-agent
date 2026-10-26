@@ -247,5 +247,33 @@ def test_a_ranking_word_compares_the_names_after_the_last_comma():
 
 def test_an_even_factor_or_an_ellipsis():
     d = directions.Directions(favours=EVEN)
-    assert not directions.contradictions("Even.", d, favours=PICKENS)  # a level factor reverses nothing
+    assert not directions.contradictions("Even.", d, favours=EVEN)
+    # A side on a level factor is replaced (the first-named-player bias, QA 26 October 2026).
+    assert directions.contradictions("Even.", d, favours=PICKENS) == [
+        "it says this factor favours George Pickens, but by the code rule the numbers are even"]
     assert directions.contradictions("Start Trey McBride over Brock Bowers. ...", d) == ["it is unfinished (an ellipsis)"]
+
+
+# --- a side on an even factor is the first-named-player bias (QA, 26 October 2026) ---
+
+OLAVE, FLOWERS = "Chris Olave", "Zay Flowers"  # touchdown share 10.6% vs 12.7%: even by the code rule
+
+
+@pytest.mark.parametrize("named_first", [OLAVE, FLOWERS])
+def test_a_side_on_an_even_factor_is_replaced_whatever_the_order(named_first):
+    d = directions.Directions(favours=EVEN)
+    problems = directions.contradictions(f"{named_first} has the clear edge here.", d, favours=named_first)
+    assert problems == [f"it says this factor favours {named_first}, but by the code rule the numbers are even"]
+
+
+def test_even_on_an_even_factor_passes():
+    assert not directions.contradictions("Both are level here.", directions.Directions(favours=EVEN), favours=EVEN)
+
+
+def test_a_side_is_still_allowed_when_the_code_rule_has_one():
+    d = directions.Directions(favours=PICKENS)
+    assert not directions.contradictions("George Pickens has the edge here.", d, favours=PICKENS)
+
+
+def test_single_player_factors_are_unchanged():
+    assert not directions.contradictions("He has the edge here.", directions.Directions(), favours=None)

@@ -354,6 +354,11 @@ def contradictions(text: str, d: Directions, favours: str | None = None) -> list
     problems = []
     if favours and d.favours and d.favours != EVEN and favours != EVEN and not same_player(favours, d.favours):
         problems.append(f"it says this factor favours {favours}, but the numbers favour {d.favours}")
+    # A side on a factor the code rule calls even is a coin flip, and a model leans to the
+    # player named first ("Olave or Flowers" gave Olave touchdown share at 10.6% vs 12.7%;
+    # asked the other way round, Flowers): the card must say even, whatever the order.
+    if favours and favours != EVEN and d.favours == EVEN:
+        problems.append(f"it says this factor favours {favours}, but by the code rule the numbers are even")
     if ELLIPSIS.search(text):
         problems.append("it is unfinished (an ellipsis)")
     text = _resolve_he(text, set(d.matchups) | set(d.allowed))
