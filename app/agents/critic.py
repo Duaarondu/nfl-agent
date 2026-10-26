@@ -182,6 +182,7 @@ HARD_RULES = {
     "position": "gave a player another position's label",
     "no_data": "picked a player with no data",
     "bye": "started a player who is on bye",
+    "direction": "described a matchup or a comparison the wrong way round",
 }
 
 
@@ -195,7 +196,7 @@ def _hard_rule(issue: Issue) -> str | None:
     if "names no player" in issue.reason:
         return "named"
     return {"verdict_support": "pick", "compare": "compare", "no_data": "no_data",
-            "position_label": "position", "bye": "bye"}.get(issue.check)
+            "position_label": "position", "bye": "bye", "direction": "direction"}.get(issue.check)
 
 
 def fallback_reason(critiques: list[Critique]) -> str | None:

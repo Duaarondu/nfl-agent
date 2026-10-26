@@ -191,3 +191,46 @@ def test_after_a_review_timeout_later_rounds_use_the_code_checks_only(real_sampl
     assert run.critiques[1].review_note == "the model review timed out in round 1; code checks only"
     [skipped] = [l for l in read_trace(trace_dir) if l["action"] == "review" and l["status"] == "skipped"]
     assert skipped["round"] == 2 and skipped["reason"] == run.critiques[1].review_note
+
+
+def script_compare(model, names, verdict):
+    """A compare question whose every verdict (first and revisions) is the same reply."""
+    def respond(messages):
+        system = messages[0]["content"]
+        if system == analyst.CLASSIFY_PROMPT:
+            return json.dumps({"player_name": names[0], "player_names": names, "question_type": "compare"})
+        if system == analyst.COMPARE_FACTOR_PROMPT:
+            return json.dumps({"favours": None, "support": "moderate", "summary": "Facts."})
+        if system == analyst.VERDICT_PROMPT:
+            return verdict
+        if system == critic.REVIEW_PROMPT:
+            return NO_ISSUES
+        raise AssertionError(system[:60])
+
+    model.respond = respond
+
+
+@pytest.mark.parametrize("question, names, verdict", [
+    # Smoke 7: LA is rank 31 of 32 (tough), called "easier" in all three rounds.
+    ("Start Pickens or Bowers in week 7?", ["George Pickens", "Brock Bowers"],
+     json.dumps({"verdict": "Start Brock Bowers over George Pickens",
+                 "why": "Bowers averages 20.6 PPR points per game and faces an easier matchup against LA."})),
+    # Smoke 1: the model kept giving Juwan Johnson the easier matchup.
+    ("Who should I start, Johnson or McBride?", ["Juwan Johnson", "Trey McBride"],
+     json.dumps({"verdict": "Start Trey McBride over Juwan Johnson",
+                 "why": "McBride averages 17.2 PPR points per game; Juwan Johnson has the easier matchup."})),
+])
+def test_a_matchup_described_the_wrong_way_twice_gets_the_rule_based_verdict(
+        real_sample, model, trace_dir, question, names, verdict):
+    script_compare(model, names, verdict)
+    run = pipeline.answer(question)
+
+    assert run.critiques[0].status == "needs_revision"
+    assert any(i.check == "direction" and i.rule == "direction" for i in run.critiques[0].blocking)
+    assert run.approved and run.result.verdict_by == "rule-based"
+    assert len(calls(model, analyst.VERDICT_PROMPT)) == 2  # first answer + 1 revision; round 3 needs no model
+    assert "described a matchup or a comparison the wrong way round twice" in run.result.answer
+    assert run.result.answer.endswith("so fixed thresholds were applied.)")
+    assert not any(i.check == "direction" for i in run.critiques[-1].blocking)
+    [final] = [l for l in read_trace(trace_dir) if l["action"] == "final"]
+    assert (final["status"], final["rounds"]) == ("approved", 3)
