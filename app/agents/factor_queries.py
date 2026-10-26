@@ -1111,10 +1111,13 @@ def _h2h_trend(t: _Rows) -> list[str]:
         early, late = t.col(f"early_{key}_per_game")[i], t.col(f"late_{key}_per_game")[i]
         change = None if early is None or late is None else round(late - early, 1)
         sign = "" if change is None or change < 0 else "+"
+        early_share, late_share = t.col("early_target_share_pct")[i], t.col("late_target_share_pct")[i]
+        # A QB has no target share: "target share 0% vs 0%" means nothing (QA, 26 October 2026).
+        shares = (f"; target share {_fmt(early_share)}% vs {_fmt(late_share)}%"
+                  if early_share or late_share else "")
         lines.append(
             f"{name}: {_fmt(early)} {label} points per game in weeks 1-{split} vs {_fmt(late)} from week "
-            f"{split + 1} on ({sign}{_fmt(change)}); target share {_fmt(t.col('early_target_share_pct')[i])}% vs "
-            f"{_fmt(t.col('late_target_share_pct')[i])}%."
+            f"{split + 1} on ({sign}{_fmt(change)}){shares}."
         )
     return lines
 

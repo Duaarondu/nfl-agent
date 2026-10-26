@@ -95,3 +95,9 @@ def test_a_biased_model_cannot_move_the_pick_or_win_an_even_factor(real_sample, 
                 assert f.favours == code_side or factor_queries.same_player(f.favours, code_side), f.factor
         picks.append(START.search(run.result.answer).group(1))
     assert picks == ["Zay Flowers", "Zay Flowers"]  # 18.9 vs 18.8 PPR, and 17.7 vs 14.2 in the later weeks
+
+
+def test_a_qb_trend_says_nothing_about_target_share(no_model):
+    answer = pipeline.answer("Josh Allen vs Jared Goff", model_review=False).result.answer
+    assert "target share 0% vs 0%" not in answer
+    assert "21.9 PPR points per game in weeks 1-3 vs 24.7 from week 4 on" in answer  # Goff's trend still shown
