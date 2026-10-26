@@ -174,10 +174,28 @@ its request count.
   gets one repair retry.
 
 **Thinking mode.** Requests send `chat_template_kwargs.enable_thinking=false`
-(`app/agents/analyst.py`). As of this build, Nightshift does not forward it, so
-Nemotron always reasons first. That is why calls take about 10-90s, and why the
-design has parallel factor agents, per-call limits and rule fallbacks (see
-Limitations in the README).
+(`app/agents/analyst.py`).
+- **Nightshift 1.2.7 forwards the flag.** On a tiny prompt it took 0.2s and 8-9
+  completion tokens, against 1.6-8.8s and 260-1,455 tokens without the flag.
+- **Measured on all the examples.** In the reruns on 25 October 2026:
+
+  | Step | Nightshift 1.2.1 | Nightshift 1.2.7 |
+  |---|---|---|
+  | Planner | 3.5-27.1s | 0.3-0.4s |
+  | Each factor agent | 10.6-60s (one timeout) | 0.4-1.5s |
+  | First verdict | 26.9-60s (three timeouts) | 0.7-24.5s |
+  | Critic model review | 57.8s, or a timeout at 60-90s (six of seven) | 2-34s |
+  | Whole run | 128.7-349.9s | 33.9-151.0s |
+
+  Model steps went from 24 of 33 to 39 of 43 across the five fresh-run examples (the
+  rest are rule-based fallbacks).
+- **The revision call is the exception.** The verdict revision after a critic round
+  (the previous answer plus the critic's issues) still makes Nemotron reason before
+  replying: 5,900-8,400 completion tokens for a reply of about 300 characters, 42-97s,
+  or an empty reply. The same facts without the previous answer take about 1s.
+- **Nightshift 1.2.1 still works, but is slower.** It ignores the flag, so every call
+  reasons first and takes about 10-90s. The design's parallel factor agents, per-call
+  limits and rule fallbacks came from that (see Limitations in the README).
 
 ## Claude Code: how it was built
 

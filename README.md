@@ -375,13 +375,22 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 
 ## Limitations
 
-- **Slow model calls.** Nightshift doesn't forward `enable_thinking=false`, so Nemotron
-  always reasons first.
-  - **Call times:** a single call takes about 10-90s.
-  - **Fallbacks:** some steps hit their time limit and fall back to the code rules. This
-    happens most often with the critic's model review, which is capped at 90s.
-- **Run time.** A run takes about 2-6 minutes (128.7s to 349.9s in the examples above).
-  The run budget is 360s.
+- **Model speed depends on the Nightshift version.** Every request sends
+  `chat_template_kwargs.enable_thinking=false`.
+  - **Nightshift 1.2.7 forwards it.** In the reruns of the examples on 25 October 2026,
+    planner calls took 0.3-0.4s (was 3.5-27.1s), factor calls 0.4-1.5s (was 10.6-60s),
+    and the critic's model review 2-34s (was 57.8s, or a timeout at 90s). Runs took
+    33.9-151.0s (was 128.7-349.9s).
+  - **Nightshift 1.2.1 still works, but is slower.** It ignores the flag, so Nemotron
+    reasons before every reply (about 10-90s a call), and more steps hit their time
+    limit and fall back to the code rules.
+- **The verdict revision is still slow.** When the Critic sends an answer back, the
+  revision call (the previous answer plus the critic's issues) still makes Nemotron
+  reason before replying, even with the flag: 5,900-8,400 completion tokens for a reply
+  of about 300 characters, 42-97s. In 4 of 6 reruns it hit its 90s limit or came back
+  empty, and the code rules wrote the final verdict.
+- **Run time.** A run takes about 0.5-2.5 minutes on Nightshift 1.2.7; most of the
+  longer runs are the revision call. The run budget is 360s.
 - **Snapshot data.** The data is a weekly snapshot (through week 6), not a live feed.
 - **No league import.** The agent knows your league only from what you type into your
   questions.
