@@ -110,7 +110,7 @@ ANY_PPR = re.compile(r"(?<!non-)(?<!non )\bPPR\b", re.I)
 @dataclass
 class Issue:
     check: str  # verdict_support, numbers, artifacts, question_fit, timing, user_context, compare, no_data,
-    #             position_label, direction or model_review
+    #             position_label, direction, bye or model_review
     where: str  # "answer" or "factor:<name>"
     claim: str  # the words being questioned
     reason: str
@@ -125,6 +125,8 @@ class Critique:
     issues: list[Issue]
     reviewed_by: str  # "model" or "rule-based" (review off, skipped or failed: code checks only)
     status: str = "approved"  # or "needs_revision"
+    review_timed_out: bool = False  # the model review got no reply in time: later rounds skip it
+    review_note: str = ""  # why the review was rule-based this round, when it was meant to be the model's
 
     @property
     def blocking(self) -> list[Issue]:
@@ -132,12 +134,20 @@ class Critique:
 
 
 def critique(
-    result: AnalystResult, round: int, deadline: float, model_review: bool = True
+    result: AnalystResult, round: int, deadline: float, model_review: bool = True, skip_review: str | None = None
 ) -> Critique:
-    """Run the code checks, then (optionally) one model review; trace the outcome."""
+    """Run the code checks, then (optionally) one model review; trace the outcome.
+
+    skip_review: why the model review is not run this round (an earlier one timed out),
+    so the code checks alone decide; the reason is traced and kept in review_note.
+    """
     issues = check_answer(result)
     reviewed_by = "rule-based"
-    if model_review:
+    timed_out, note = False, ""
+    if model_review and skip_review:
+        note = skip_review
+        trace(result.run_id, AGENT_NAME, "review", "skipped", round=round, reviewed_by="rule-based", reason=note)
+    elif model_review:
         try:
             found_by_model = _model_review(result, issues, deadline)
             if round > MODEL_BLOCKING_ROUNDS:
@@ -146,9 +156,11 @@ def critique(
             issues += found_by_model
             reviewed_by = "model"
         except AnalystError as error:
+            timed_out = "No reply within" in str(error)
+            note = f"the model review failed ({str(error)[:120]}); code checks only"
             trace(result.run_id, AGENT_NAME, "review", "fallback", round=round, reviewed_by="rule-based",
                   reason=str(error)[:300])
-    found = Critique(round, result.answer, issues, reviewed_by)
+    found = Critique(round, result.answer, issues, reviewed_by, review_timed_out=timed_out, review_note=note)
     found.status = "needs_revision" if found.blocking else "approved"
     trace(
         result.run_id, AGENT_NAME, "critique", found.status,
@@ -169,6 +181,7 @@ HARD_RULES = {
     "named": "gave a verdict that names no player",
     "position": "gave a player another position's label",
     "no_data": "picked a player with no data",
+    "bye": "started a player who is on bye",
 }
 
 
@@ -182,7 +195,7 @@ def _hard_rule(issue: Issue) -> str | None:
     if "names no player" in issue.reason:
         return "named"
     return {"verdict_support": "pick", "compare": "compare", "no_data": "no_data",
-            "position_label": "position"}.get(issue.check)
+            "position_label": "position", "bye": "bye"}.get(issue.check)
 
 
 def fallback_reason(critiques: list[Critique]) -> str | None:
@@ -215,6 +228,7 @@ def _check_answer(result: AnalystResult) -> list[Issue]:
         *check_has_data(result),
         *check_position_labels(result),
         *check_directions(result),
+        *check_bye(result),
     ]
 
 
@@ -312,24 +326,7 @@ def allowed_numbers(result: AnalystResult) -> list[float]:
     return sorted({float(m) for text in texts for m in NUMBER.findall(text)})
 
 
-def unknown_numbers(text: str, allowed: list[float]) -> list[tuple[str, str]]:
-    """(sentence, number) for each number in text that no allowed value matches to 1 decimal place.
-
-    The difference or sum of two allowed numbers cited in the same sentence is allowed
-    too: "a 3.4-point edge (20.6 vs 17.2)".
-    """
-    out = []
-    known = lambda v: any(abs(v - a) < 0.051 for a in allowed)
-    for sentence in sentences(text):
-        values = [float(v) for v in NUMBER.findall(sentence)]
-        cited = [v for v in values if known(v)]
-        derived = {round(x + y, 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
-        derived |= {round(abs(x - y), 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
-        for value in NUMBER.findall(sentence):
-            v = float(value)
-            if not known(v) and not any(abs(v - d) < 0.051 for d in derived):
-                out.append((sentence, value))
-    return out
+unknown_numbers = directions.unknown_numbers  # shared with the factor-summary check (analyst._rate_factors)
 
 
 # --- c) leftovers from prompts and data ---
@@ -373,7 +370,9 @@ def check_question_fit(result: AnalystResult) -> list[Issue]:
         if _action(first):
             return [Issue("question_fit", "answer", first,
                           f"A why question needs the explanation first; the answer opens with the action '{first}'.")]
-        if not NUMBER.search(first):
+        # "Kittle's scoring is driven by teammate absences ... When teammates are out, his target
+        # share jumps from 19.2% to 24.5%": the numbers may come in the second sentence (smoke run).
+        if not any(NUMBER.search(s) for s in parts[:2]):
             return [Issue("question_fit", "answer", first,
                           "A why answer should open with the explanation and its numbers.")]
     elif qt == "replacement":
@@ -604,6 +603,25 @@ def check_directions(result: AnalystResult) -> list[Issue]:
             for problem in directions.contradictions(sentence, found)]
 
 
+# --- j) no start for a player on bye ---
+
+
+def check_bye(result: AnalystResult) -> list[Issue]:
+    """A start for a player whose team has no game in the matchup week (factor_queries.on_bye)."""
+    verdict = verdict_sentence(result.answer)
+    name = recommended_name(verdict) if verdict else None
+    if not name or _action(verdict) != "start":
+        return []
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
+    week = next((w for n, w in factor_queries.on_bye(results).items() if same_player(n, name)), None)
+    if week is None:
+        return []
+    others = [p.name for p in result.players if not same_player(p.name, name)]
+    instead = f"start {others[0]}" if others else f"Sit {name}"
+    return [Issue("bye", "answer", verdict, f"{name} is on bye in week {week}: no game, so the verdict is "
+                                             f"\"{instead[:1].upper() + instead[1:]}\".")]
+
+
 def as_rule(issue: Issue) -> str:
     """A blocking issue as a rule for the verdict revision, without quoting the old answer
     (analyst.revise_verdict): "Do not write '[strong]': it is a support label ..."."""
@@ -771,7 +789,13 @@ def recommended_name(verdict: str) -> str | None:
     if not action:
         return None
     m = re.match(r"[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*)*", verdict[len(action):].strip())
-    return m.group(0).rstrip(".") if m else None
+    if not m:
+        return None
+    # A suffix ends the name: "Hold Deebo Samuel Sr. Deebo Samuel Sr. faces ATL" is one
+    # sentence to the splitter, and was read as "Deebo Samuel Sr. Deebo Samuel Sr" (smoke run).
+    words = m.group(0).split()
+    end = next((i + 1 for i, w in enumerate(words) if factor_queries.NAME_SUFFIX.fullmatch(" " + w)), len(words))
+    return " ".join(words[:end]).rstrip(".")
 
 
 def mentioned(name: str, text: str) -> bool:

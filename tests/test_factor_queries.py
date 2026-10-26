@@ -445,7 +445,44 @@ def test_start_sit_and_waiver_plan_the_named_week(real_sample):
     for qt in ("start_sit", "waiver"):
         q = fq.plan(qt, MCBRIDE, SEASON, WEEK, week=8)[-1]
         assert q.factor == "Next matchup" and "week 8 opponent" in q.purpose and "8 AS week" in q.sql
-    assert "next opponent after week 6" in fq.plan("start_sit", MCBRIDE, SEASON, WEEK)[-1].purpose
+    # No week named: the week after the latest stats week, not each team's next game.
+    assert "week 7 opponent" in fq.plan("start_sit", MCBRIDE, SEASON, WEEK)[-1].purpose
+
+
+def test_no_week_named_means_the_week_after_the_stats_so_a_bye_shows(real_sample):
+    # Smoke run: "Should I start Josh Allen this week?" got BAL, BUF's week 8 game; BUF has no week 7 game.
+    [allen] = lookup("Josh Allen")
+    q = fq.plan("start_sit", allen, SEASON, WEEK)[-1]
+    r = run_sql(q.sql)
+    assert fq.on_bye({"Next matchup": (r["headers"], r["data"])}) == {"Josh Allen": "7"}
+
+
+def test_a_qb_gets_no_team_usage_query(real_sample):
+    [allen] = lookup("Josh Allen")
+    assert "Team usage" not in [q.factor for q in fq.plan("start_sit", allen, SEASON, WEEK)]
+    assert "Team usage" in [q.factor for q in fq.plan("start_sit", MCBRIDE, SEASON, WEEK)]
+
+
+@pytest.mark.parametrize("asked", ["Deebo Samuel", "Deebo Samuel Sr.", "deebo samuel sr"])
+def test_names_match_with_or_without_a_suffix(real_sample, asked):
+    # Smoke run eef583ef739b: "Should I pick up Deebo Samuel?" found nobody; the roster says "Deebo Samuel Sr.".
+    r = run_sql(fq.lookup_sql(fq.name_candidates(f"Should I pick up {asked}?"), SEASON))
+    assert [row[1] for row in r["data"]] == ["Deebo Samuel Sr."]
+
+
+@pytest.mark.parametrize("rank, label", [(1, "favorable"), (10, "favorable"), (11, "neutral"), (15, "neutral"),
+                                         (22, "neutral"), (23, "tough"), (31, "tough"), (32, "tough")])
+def test_matchup_labels_from_the_allowed_rank(rank, label):
+    assert fq.matchup_label(rank, 32) == label
+
+
+@pytest.mark.parametrize("question, pickup", [
+    ("Should I pick up Deebo Samuel?", True),
+    ("Should I pick up a 49ers receiver if Evans misses time?", False),  # says Evans is out
+    ("Who becomes the Bucs' WR1 if Mike Evans is out?", False),
+])
+def test_a_pickup_question_is_waiver_unless_a_player_is_out(question, pickup):
+    assert fq.is_pickup_question(question) is pickup
 
 
 def test_compare_rule_starts_the_player_who_is_not_on_bye(real_sample):

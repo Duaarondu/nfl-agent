@@ -193,7 +193,8 @@ def to_json(run: PipelineResult, lines: list[dict[str, Any]], seconds: float) ->
         "not_measurable": r.not_measurable,
         "critic": {
             "approved": run.approved,
-            "rounds": [{"round": c.round, "status": c.status, "reviewed_by": c.reviewed_by, "answer": c.answer,
+            "rounds": [{"round": c.round, "status": c.status, "reviewed_by": c.reviewed_by,
+                        "review_note": c.review_note, "answer": c.answer,
                         "issues": [{"check": i.check, "where": i.where, "claim": i.claim, "reason": i.reason,
                                     "blocking": i.blocking} for i in c.issues]} for c in run.critiques],
         },

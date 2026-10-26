@@ -650,3 +650,46 @@ def test_first_compare_verdict_gets_the_leaders(real_sample, model):
             "Jameson Williams leads.") in prompt
     assert "If one player leads on both, start him" in prompt
     assert "Positions (from the rosters): " in prompt and "George Pickens WR" in prompt
+
+
+# --- smoke run fixes (25 October 2026): bye, matchup labels, wrong numbers, QB ---
+
+ALLEN = "Should I start Josh Allen this week?"
+
+
+def test_a_player_on_bye_gets_the_hard_rule_and_the_critic_blocks_a_start(real_sample, model):
+    # Smoke run: "Start Josh Allen" against BAL, BUF's week 8 game; BUF has no week 7 game.
+    from app.agents import critic
+
+    script(model, classify("Josh Allen", "start_sit"), answer=verdict("Start Josh Allen", "He is the QB1."))
+    result = analyze(ALLEN)
+    assert [q.factor for q in result.queries if q.factor] == ["Player lookup", "Status", "Depth chart", "Next matchup"]
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    assert "- He is on bye in week 7: Sit Josh Allen." in call[1]["content"]
+    assert "Josh Allen is on bye in week 7: no game." in call[1]["content"]
+    [issue] = [i for i in critic.check_answer(result) if i.check == "bye"]
+    assert issue.blocking and issue.rule == "bye"
+    assert issue.reason == 'Josh Allen is on bye in week 7: no game, so the verdict is "Sit Josh Allen".'
+
+
+def test_a_reversed_matchup_label_in_a_factor_summary_is_replaced(real_sample, model):
+    # Smoke question 9: "LA ... 31st of 32 ... the easiest matchup" was shown and approved.
+    script(model, classify("Brock Bowers", "start_sit"), factors={
+        "Next matchup": rating("strong", "Brock Bowers faces LA, which ranks 31st of 32 in points allowed to TEs, "
+                                         "making it the easiest matchup for the position."),
+    })
+    result = analyze("Should I start Brock Bowers this week?")
+    matchup = next(f for f in result.factors if f.factor == "Next matchup")
+    assert matchup.rated_by == "rule-based" and "model summary replaced: 'easiest' does not fit" in matchup.rule
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    assert "Brock Bowers's week 7 opponent LA: rank 31 of 32, tough matchup" in call[1]["content"]
+
+
+def test_a_factor_summary_with_a_number_not_in_its_rows_is_replaced(real_sample, model):
+    # Smoke question 8: "100% of first-team reps" is in no row.
+    script(model, classify("Josh Allen", "start_sit"), factors={
+        "Depth chart": rating("strong", "Josh Allen is the undisputed QB1 with 100% of first-team reps."),
+    })
+    result = analyze(ALLEN)
+    depth = next(f for f in result.factors if f.factor == "Depth chart")
+    assert depth.rated_by == "rule-based" and "model summary replaced: 100 is not in the rows" in depth.rule

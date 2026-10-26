@@ -314,3 +314,11 @@ def test_compare_with_a_user_id_remembers_both_and_still_answers(real_sample, me
     assert run.result.user_context.roster_names == ("Jameson Williams", "George Pickens")
     assert run.result.answer.startswith("Start George Pickens over Jameson Williams")
     assert run.approved
+
+
+def test_a_roster_name_matches_with_or_without_a_suffix(real_sample):
+    # "I have Deebo Samuel": the roster says "Deebo Samuel Sr." (smoke run).
+    found, unresolved, _ = memory.resolve_players(["Deebo Samuel", "Deebo Samuel Sr."])
+    assert {n: p.name for n, p in found.items()} == {"Deebo Samuel": "Deebo Samuel Sr.",
+                                                     "Deebo Samuel Sr.": "Deebo Samuel Sr."}
+    assert unresolved == []

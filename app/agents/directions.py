@@ -13,6 +13,14 @@ A summary contradicts the numbers when it:
 - says a share rose (or fell) when the code computed the opposite
 - says a player ranks above one with a higher share
 - gives the easier matchup to the player whose opponent allows fewer points
+- calls a matchup easy or favorable when its code label is tough, or tough when it is
+  favorable, or "top-third"/"bottom-third" when that is not its label (matchup_label:
+  ranks 1-10 of 32 favorable, 11-22 neutral, 23-32 tough; rank 1 allows the most)
+- quotes a number that is not in the rows or the computed facts (factor summaries only:
+  unknown_numbers, as the Critic's numbers check)
+
+"He" or "his" is the sentence's first-named player: in "Bowers also outperforms ...
+versus Pickens's 16.9, and he faces a significantly easier matchup" he is Bowers.
 
 Only unambiguous words are checked. A vague one ("edge", "advantage", "better",
 "leads") does not say which number is which, so it is never checked, and it ends the
@@ -103,6 +111,7 @@ class Directions:
     trends: dict[str, float] = field(default_factory=dict)  # metric -> change (later minus earlier, or with minus without)
     trend_label: str = ""  # what the trends compare, for the reason
     allowed: dict[str, float] = field(default_factory=dict)  # player -> next opponent's points allowed (higher = easier)
+    matchups: dict[str, dict] = field(default_factory=dict)  # player -> {opp, rank, teams, label} (matchup_label)
 
 
 def _direction(a: float | None, b: float | None, up: str = "higher", down: str = "lower", level: str = "level") -> str:
@@ -188,11 +197,22 @@ def directions(factor: str, results: Results, subject: str | None = None) -> Dir
                 d.lines.append(f"{n}'s target share was {_direction(s, played[n])} without him "
                                f"({_fmt(s)}% vs {_fmt(played[n])}% with him).")
     elif factor == "Next matchup":
-        for name, opp, rank, teams in zip(t.text("player"), t.text("opponent"), t.col("allowed_rank"), t.col("teams_ranked")):
-            if opp and rank is not None:
-                d.lines.append(f"{name}'s opponent {opp} ranks {_fmt(rank)} of {_fmt(teams)} in points allowed to "
-                               "the position; rank 1 allows the most points, the easiest matchup.")
+        _matchup_labels(t, d)
     return d
+
+
+def _matchup_labels(t: _Rows, d: Directions) -> None:
+    """ "Brock Bowers's week 7 opponent LA: rank 31 of 32, tough matchup (...)." or a bye line."""
+    for name, week, opp, rank, teams in zip(t.text("player"), t.text("game_week"), t.text("opponent"),
+                                            t.col("allowed_rank"), t.col("teams_ranked")):
+        if week and not opp:
+            d.lines.append(f"{name} is on bye in week {week}: no game.")
+            continue
+        label = fq.matchup_label(rank, teams)
+        if opp and label:
+            d.matchups[name] = {"opp": opp, "rank": rank, "teams": teams, "label": label}
+            d.lines.append(f"{name}'s week {week} opponent {opp}: rank {_fmt(rank)} of {_fmt(teams)}, {label} matchup "
+                           "(rank 1 allows the most points; 1-10 favorable, 11-22 neutral, 23-32 tough).")
 
 
 def _absence_weeks(t: _Rows, results: Results, d: Directions, label: str) -> None:
@@ -258,6 +278,7 @@ def _head_to_head(factor: str, t: _Rows, results: Results, d: Directions) -> Dir
             d.lines.append(f"Share of points from touchdowns: {a} {_fmt(share[a])}% vs {b} {_fmt(share[b])}%; "
                            f"{steadier} is less touchdown-dependent (lower is steadier).")
     elif factor == "Next matchup":
+        _matchup_labels(t, d)
         allowed = next((h for h in t.headers if h.startswith("opp_avg_")), "")
         rows = {n: i for n, i in zip(t.text("player"), range(len(t.rows)))}
         opp, rank, value = t.text("opponent"), t.col("allowed_rank"), t.col(allowed)
@@ -318,9 +339,23 @@ def contradictions(text: str, d: Directions, favours: str | None = None) -> list
     if ELLIPSIS.search(text):
         problems.append("it is unfinished (an ellipsis)")
     for sentence, clause in _clauses(text):
-        problems += _pairs(clause) + _from_to(clause) + _trend_words(clause, d) + _matchup_words(clause, d)
-        problems += _ranking(sentence, clause, d)
+        problems += _pairs(clause) + _from_to(clause) + _trend_words(clause, d) + _matchup_words(sentence, clause, d)
+        problems += _ranking(sentence, clause, d) + _label_words(sentence, clause, d)
     return list(dict.fromkeys(problems))
+
+
+PRONOUN = re.compile(r"\b(?:he|his|him)\b", re.I)
+
+
+def _subject(sentence: str, clause: str, at: int, names) -> str | None:
+    """The player a word at `at` in clause is about: the nearest one named before it, or,
+    if "he"/"his" stands between, the sentence's first-named player."""
+    before = [(p, n) for p, n in _mentions(clause, names) if p < at]
+    last = before[-1][0] if before else -1
+    if PRONOUN.search(clause[last + 1:at]):
+        first = _mentions(sentence, names)
+        return first[0][1] if first else None
+    return before[-1][1] if before else None
 
 
 def _pairs(clause: str) -> list[str]:
@@ -394,16 +429,16 @@ def _trend_words(clause: str, d: Directions) -> list[str]:
     return out
 
 
-def _matchup_words(clause: str, d: Directions) -> list[str]:
+def _matchup_words(sentence: str, clause: str, d: Directions) -> list[str]:
     if len(d.allowed) != 2:
         return []
     out = []
     named = _mentions(clause, d.allowed)
     for pattern, easier in ((EASIER, True), (TOUGHER, False)):
         for m in pattern.finditer(clause):
-            before = [n for at, n in named if at < m.start()]
             after = [n for at, n in named if at > m.start()]
-            who = before[-1] if before else (after[0] if after else None)
+            who = _opponent_after(clause, m.end(), d) or _subject(sentence, clause, m.start(), d.allowed) or (
+                after[0] if after else None)
             if who is None:
                 continue
             other = next(n for n in d.allowed if n != who)
@@ -414,6 +449,100 @@ def _matchup_words(clause: str, d: Directions) -> list[str]:
                 out.append(f"it gives {who} the {'easier' if easier else 'tougher'} matchup, but {who}'s opponent "
                            f"allows {_fmt(mine)} to {other}'s {_fmt(theirs)}; more points allowed is easier")
     return out
+
+
+# Matchup words checked against the code's label (fq.matchup_label).
+EASY_WORDS = re.compile(r"\b(?:easy|easier|easiest|favou?rable|soft|softer|softest|friendly|friendlier|friendliest)\b",
+                        re.I)
+TOUGH_WORDS = re.compile(r"\b(?:tough|tougher|toughest|hard|harder|hardest|stingy|stingier|stingiest|difficult)\b", re.I)
+THIRD = re.compile(r"\b(?P<which>top|bottom)[- ]third\b", re.I)
+NEGATED = re.compile(r"\b(?:not|less|never|isn't|wasn't|no)\s+(?:\w+\s+)?$", re.I)
+MATCHUP_CONTEXT = re.compile(r"matchup|defen[cs]e|opponent|allow|\bfac(?:es|ing)\b|\brank", re.I)
+# City names the team codes do not carry (fq.TEAM_NAMES has nicknames): "Los Angeles" for LA or LAC.
+CITIES = {"los angeles": ("LA", "LAC"), "new york": ("NYG", "NYJ"), "arizona": ("ARI",), "atlanta": ("ATL",),
+          "baltimore": ("BAL",), "buffalo": ("BUF",), "carolina": ("CAR",), "chicago": ("CHI",),
+          "cincinnati": ("CIN",), "cleveland": ("CLE",), "dallas": ("DAL",), "denver": ("DEN",),
+          "detroit": ("DET",), "green bay": ("GB",), "houston": ("HOU",), "indianapolis": ("IND",),
+          "jacksonville": ("JAX",), "kansas city": ("KC",), "las vegas": ("LV",), "miami": ("MIA",),
+          "minnesota": ("MIN",), "new england": ("NE",), "new orleans": ("NO",), "philadelphia": ("PHI",),
+          "pittsburgh": ("PIT",), "san francisco": ("SF",), "seattle": ("SEA",), "tampa bay": ("TB",),
+          "tennessee": ("TEN",), "washington": ("WAS",)}
+
+
+def _opponent_mentions(text: str, d: Directions) -> list[tuple[int, str]]:
+    """(position, player) for each mention of a player's opponent: "LA", "Rams", "Los Angeles"."""
+    out = []
+    for player, m in d.matchups.items():
+        code = m["opp"]
+        out += [(x.start(), player) for x in re.finditer(rf"\b{re.escape(code)}\b", text)]
+        names = [n for n in fq.TEAM_NAMES.get(code, ())]
+        names += [city for city, codes in CITIES.items()
+                  if code in codes and sum(c in codes for c in (v["opp"] for v in d.matchups.values())) == 1]
+        out += [(x.start(), player) for n in names for x in re.finditer(rf"\b{re.escape(n)}\b", text, re.I)]
+    return sorted(out)
+
+
+def _opponent_after(clause: str, at: int, d: Directions) -> str | None:
+    """The player whose opponent is named just after a matchup word: "easier matchup with Los Angeles"."""
+    near = [(p, n) for p, n in _opponent_mentions(clause, d) if at <= p <= at + 40]
+    return near[0][1] if near else None
+
+
+def _label_words(sentence: str, clause: str, d: Directions) -> list[str]:
+    if not d.matchups or not MATCHUP_CONTEXT.search(clause):
+        return []
+    out = []
+    words = [(m, "easy") for m in EASY_WORDS.finditer(clause)] + [(m, "tough") for m in TOUGH_WORDS.finditer(clause)]
+    words += [(m, m.group("which").lower()) for m in THIRD.finditer(clause)]
+    for m, kind in words:
+        if NEGATED.search(clause[:m.start()]):
+            continue  # "not an easy matchup", "less favorable": not checked
+        who = _opponent_after(clause, m.end(), d)
+        if who is None:
+            before = [(p, n) for p, n in sorted(_opponent_mentions(clause, d) + _mentions(clause, d.matchups))
+                      if p < m.start()]
+            last = before[-1][0] if before else -1
+            if PRONOUN.search(clause[last + 1:m.start()]):
+                first = _mentions(sentence, d.matchups)
+                who = first[0][1] if first else None
+            else:
+                who = before[-1][1] if before else None
+        if who is None and len(d.matchups) == 1:
+            who = next(iter(d.matchups))
+        if who is None:
+            continue
+        mu = d.matchups[who]
+        label = mu["label"]
+        fits = {"easy": label != "tough", "tough": label != "favorable",
+                "top": label == "favorable", "bottom": label == "tough"}[kind]
+        if not fits:
+            out.append(f"'{m.group(0)}' does not fit {who}'s matchup: {mu['opp']} is rank {_fmt(mu['rank'])} of "
+                       f"{_fmt(mu['teams'])} in points allowed, a {label} matchup (rank 1 allows the most)")
+    return out
+
+
+def unknown_numbers(text: str, allowed: list[float]) -> list[tuple[str, str]]:
+    """(sentence, number) for each number in text that no allowed value matches to 1 decimal place.
+
+    The difference or sum of two allowed numbers cited in the same sentence is allowed
+    too: "a 3.4-point edge (20.6 vs 17.2)".
+    """
+    out = []
+    known = lambda v: any(abs(v - a) < 0.051 for a in allowed)
+    for sentence in sentences(text):
+        values = [float(v) for v in NUMBER.findall(sentence)]
+        cited = [v for v in values if known(v)]
+        derived = {round(x + y, 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
+        derived |= {round(abs(x - y), 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
+        for value in NUMBER.findall(sentence):
+            v = float(value)
+            if not known(v) and not any(abs(v - d) < 0.051 for d in derived):
+                out.append((sentence, value))
+    return out
+
+
+def numbers_in(texts) -> list[float]:
+    return sorted({float(m) for text in texts for m in NUMBER.findall(str(text))})
 
 
 def _ranking(sentence: str, clause: str, d: Directions) -> list[str]:
@@ -452,6 +581,7 @@ def all_directions(results: Results, subject: str | None = None) -> Directions:
         merged.lines += d.lines
         if d.allowed:
             merged.allowed = d.allowed
+        merged.matchups.update(d.matchups)
         if factor == "Team usage":
             merged.shares, merged.share_label = d.shares, d.share_label
     return merged

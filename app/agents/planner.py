@@ -9,6 +9,7 @@ looks the player up, checks the premise and runs the factor queries for that typ
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,15 +50,33 @@ def plan(run_id: str, question: str) -> Route:
         reply = analyst._ask_json(run_id, "classify", messages, MAX_TOKENS, _check, agent_name=AGENT_NAME,
                                   timeout=TIMEOUT)
         name = reply.get("player_name")
+        name = name.strip() if isinstance(name, str) and name.strip() else None
         names = tuple(n.strip() for n in reply.get("player_names") or [] if isinstance(n, str) and n.strip())
-        route = Route(name.strip() if isinstance(name, str) and name.strip() else (names[0] if names else None),
-                      reply["question_type"], "model", names if reply["question_type"] == "compare" else ())
+        # A name whose last name is not in the question is the model's guess, not the user's:
+        # "Johnson or McBride?" came back as Brock Bowers and Trey McBride (smoke run).
+        dropped = [n for n in dict.fromkeys((name, *names)) if n and not named_in(n, question)]
+        names = tuple(n for n in names if n not in dropped)
+        name = None if name in dropped else name
+        question_type = reply["question_type"]
+        if question_type == "replacement" and factor_queries.is_pickup_question(question):
+            question_type = "waiver"  # "Should I pick up Deebo Samuel?" is not about who replaces him
+        route = Route(name or (names[0] if names else None), question_type, "model",
+                      names if question_type == "compare" else ())
+        if dropped or question_type != reply["question_type"]:
+            trace(run_id, AGENT_NAME, "classify", "corrected", dropped_names=dropped,
+                  question_type=question_type, model_question_type=reply["question_type"])
     except analyst.AnalystError as error:
         route = Route(None, factor_queries.guess_question_type(question), "keyword")
         trace(run_id, AGENT_NAME, "classify", "fallback", error=str(error), question_type=route.question_type)
     trace(run_id, AGENT_NAME, "handoff", "ok", target_agent="analyst", player_name=route.player_name,
           player_names=list(route.player_names), question_type=route.question_type, classified_by=route.by)
     return route
+
+
+def named_in(name: str, question: str) -> bool:
+    """Whether the question names this player's last name (suffixes and case ignored)."""
+    last = factor_queries.name_key(name).split()[-1:]
+    return bool(last) and re.search(rf"\b{re.escape(last[0])}\b", factor_queries.name_key(question)) is not None
 
 
 def _check(reply: dict[str, Any]) -> None:

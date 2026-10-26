@@ -447,6 +447,12 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
     results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error}
     subject = plan.player.name if plan.player else None
     found = {q.factor: directions.directions(q.factor, results, subject) for q in rated if not q.error}
+    # Numbers a factor summary may quote: the question, the rows and the facts computed from them.
+    allowed = directions.numbers_in([question, player_line, *(v for q in plan.queries for row in q.rows for v in row
+                                                             if v is not None),
+                                     *(line for q in plan.queries if not q.error
+                                       for line in factor_queries.summarize(q.factor or "", q.headers, q.rows)),
+                                     *(line for d in found.values() for line in d.lines)])
     replies: dict[int, dict[str, Any] | Exception] = {}
     deadline = time.perf_counter() + window
 
@@ -475,6 +481,8 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
         if isinstance(reply, dict):
             summary = round_numbers(reply["summary"])
             wrong = directions.contradictions(summary, found[q.factor], reply.get("favours"))
+            # "4.4 more half-PPR points per game (17.1 vs 13.1)": a number not in its rows (smoke run).
+            wrong += [f"{value} is not in the rows" for _, value in directions.unknown_numbers(summary, allowed)]
             if not wrong:
                 factor = Factor(q.factor, reply["support"], summary, _evidence(q), favours=reply.get("favours"))
                 trace(run_id, agent, "rate_factor", "ok", rated_by="model", support=factor.support,
@@ -686,6 +694,13 @@ def _hard_rules(
         rules.append(f"Never recommend picking up {', '.join(roster)}: already on the user's roster.")
     if question_type == "replacement":
         rules.append('The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.')
+    for name, week in factor_queries.on_bye(results).items():
+        if question_type == "compare" and len(players) >= 2:
+            other = next((p.name for p in players if not factor_queries.same_player(p.name, name)), None)
+            if other:
+                rules.append(f"{name} is on bye in week {week}: start {other}.")
+        elif question_type == "start_sit":
+            rules.append(f"He is on bye in week {week}: Sit {name}.")
     if player and (question_type == "replacement" or (out and question_type in ("start_sit", "waiver"))):
         rules += _backed_pick(player, results, tuple(roster))
     elif player and question_type != "compare":

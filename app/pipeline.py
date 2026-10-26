@@ -70,10 +70,14 @@ def review(result: AnalystResult, started: float | None = None, model_review: bo
     run_id = result.run_id
     first_answer = result.answer
     critiques: list[Critique] = []
+    skip_review = None  # after one review timeout, the later rounds use the code checks only
     for round in range(1, MAX_ROUNDS + 1):
         last = round == MAX_ROUNDS
-        found = critic.critique(result, round, deadline if last else deadline - REVISE_RESERVE, model_review)
+        found = critic.critique(result, round, deadline if last else deadline - REVISE_RESERVE, model_review,
+                                skip_review=skip_review)
         critiques.append(found)
+        if found.review_timed_out and skip_review is None:
+            skip_review = f"the model review timed out in round {round}; code checks only"
         if not found.blocking or last:
             break
         rule_based = critic.fallback_reason(critiques) if round >= 2 and round == MAX_ROUNDS - 1 else None

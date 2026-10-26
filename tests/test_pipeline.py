@@ -179,3 +179,15 @@ def test_review_runs_the_loop_on_a_saved_answer(model, trace_dir):
     assert {i.check for i in run.critiques[0].blocking} == {"verdict_support", "artifacts"}
     assert run.result.answer.startswith(f"{KITTLE_LEAD}.")
     assert not calls(model, analyst.FACTOR_PROMPT) and not calls(model, analyst.CLASSIFY_PROMPT)
+
+
+def test_after_a_review_timeout_later_rounds_use_the_code_checks_only(real_sample, model, trace_dir):
+    # Smoke question 4: three review timeouts at 60s each, 257s in all.
+    script(model, [SAMUEL], revised=[KITTLE], review=meterless.MeterlessError("No reply within 60s."))
+    run = pipeline.answer(BUCS)
+    assert run.approved and len(run.critiques) == 2
+    assert len(calls(model, critic.REVIEW_PROMPT)) == 1  # round 2 does not call the reviewer
+    assert run.critiques[1].reviewed_by == "rule-based"
+    assert run.critiques[1].review_note == "the model review timed out in round 1; code checks only"
+    [skipped] = [l for l in read_trace(trace_dir) if l["action"] == "review" and l["status"] == "skipped"]
+    assert skipped["round"] == 2 and skipped["reason"] == run.critiques[1].review_note

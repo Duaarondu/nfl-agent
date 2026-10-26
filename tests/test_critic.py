@@ -590,3 +590,24 @@ def test_issues_become_rules_without_the_old_answer():
     assert critic.as_rule(label) == "Do not write '[strong]': a support label copied from the prompt."
     support = critic.Issue("verdict_support", "answer", "Start Deebo Samuel.", "Samuel trails Kittle.")
     assert critic.as_rule(support) == "Samuel trails Kittle."
+
+
+def test_a_why_answer_may_put_its_numbers_in_the_second_sentence():
+    # Smoke question 4 was unresolved after 3 rounds on this opening.
+    result = with_answer(WATSON, "Watson's scoring is driven by big plays and touchdowns. His 22.2% target share "
+                                 "and 6 touchdowns explain it. Verdict: hold Christian Watson.")
+    assert not issues(result, "question_fit")
+    late = with_answer(WATSON, "Watson's scoring is driven by big plays. Touchdowns help too. His 22.2% share. "
+                               "Verdict: hold Christian Watson.")
+    assert "open with the explanation and its numbers" in issues(late, "question_fit")[0].reason
+
+
+@pytest.mark.parametrize("verdict, name", [
+    # Smoke run: both blocked as "Deebo Samuel Sr. Deebo Samuel Sr has no recent target share".
+    ("Hold Deebo Samuel Sr. Deebo Samuel Sr. faces ATL in week 7.", "Deebo Samuel Sr"),
+    ("Hold off on Deebo Samuel Sr. Most supported by the data: Depth chart (strong).", "Deebo Samuel Sr"),
+    ("Start Brock Bowers over Trey McBride.", "Brock Bowers"),
+    ("Start Marvin Harrison Jr.", "Marvin Harrison Jr"),
+])
+def test_a_suffix_ends_the_recommended_name(verdict, name):
+    assert critic.recommended_name(verdict) == name

@@ -41,8 +41,76 @@ def matchup():
 def test_more_points_allowed_is_the_easier_matchup():
     d = matchup()
     assert d.favours == PICKENS
-    assert d.lines[0] == ("Easier matchup: George Pickens (PHI allow 31.8, rank 3) over Jameson Williams "
-                          "(GB allow 26, rank 17); more points allowed and a lower rank number mean an easier matchup.")
+    assert ("Easier matchup: George Pickens (PHI allow 31.8, rank 3) over Jameson Williams "
+            "(GB allow 26, rank 17); more points allowed and a lower rank number mean an easier matchup.") in d.lines
+    assert d.lines[0].startswith("George Pickens's week 7 opponent PHI: rank 3 of 32, favorable matchup")
+    assert d.lines[1].startswith("Jameson Williams's week 7 opponent GB: rank 17 of 32, neutral matchup")
+
+
+# --- matchup labels from code (smoke run, 25 October 2026) ---
+
+BOWERS_PICKENS = (["player", "team", "position", "game_week", "opponent", "played", "opp_avg_ppr_allowed",
+                   "allowed_rank", "teams_ranked", "opp_games"],
+                  [["Brock Bowers", "LV", "TE", "7", "LA", "0", "8.3", "31", "32", "6"],
+                   ["George Pickens", "DAL", "WR", "7", "PHI", "0", "38.3", "3", "32", "6"]])
+ONE = lambda row: (BOWERS_PICKENS[0], [row])
+MCBRIDE_DEN = ["Trey McBride", "ARI", "TE", "7", "DEN", "0", "13.2", "15", "32", "6"]
+
+
+def test_he_is_the_sentences_first_named_player():
+    d = directions.directions("Next matchup", {"Next matchup": BOWERS_PICKENS})
+    # Smoke question 7: approved with the matchup reversed ("he" is Bowers; LA is rank 31, tough).
+    text = ("Bowers also outperforms in recent trend, averaging 18.2 PPR points per game from week 4 onward versus "
+            "Pickens's 16.9, and he faces a significantly easier matchup with Los Angeles allowing 8.3 PPR points "
+            "to tight ends (rank 31) versus Philadelphia allowing 38.3 to wide receivers (rank 3).")
+    problems = directions.contradictions(text, d)
+    assert ("it gives Brock Bowers the easier matchup, but Brock Bowers's opponent allows 8.3 to George Pickens's "
+            "38.3; more points allowed is easier") in problems
+    assert ("'easier' does not fit Brock Bowers's matchup: LA is rank 31 of 32 in points allowed, a tough matchup "
+            "(rank 1 allows the most)") in problems
+
+
+@pytest.mark.parametrize("row, text, word", [
+    # Smoke question 9: "LA ... 31st of 32 ... making it the easiest matchup", approved in round 1.
+    (BOWERS_PICKENS[1][0], "He faces LA, which ranks 31st of 32 in points allowed to TEs, surrendering only 8.3 PPR "
+                           "points per game, making it the easiest matchup for the position.", "easiest"),
+    # Smoke question 2: rank 15 is neutral, not bottom-third.
+    (MCBRIDE_DEN, "His opponent DEN ranks 15th of 32 in points allowed to TEs, which is a bottom-third matchup.",
+     "bottom-third"),
+    (BOWERS_PICKENS[1][1], "Pickens faces a tough PHI defense (rank 3).", "tough"),
+])
+def test_matchup_words_must_fit_the_code_label(row, text, word):
+    d = directions.directions("Next matchup", {"Next matchup": ONE(row)})
+    [problem] = directions.contradictions(text, d)
+    assert problem.startswith(f"'{word}' does not fit")
+
+
+@pytest.mark.parametrize("row, text", [
+    (MCBRIDE_DEN, "He faces a moderately favorable matchup, with DEN ranking 15th of 32."),  # neutral: not tough
+    (BOWERS_PICKENS[1][0], "LA is a tough matchup: rank 31 of 32."),
+    (BOWERS_PICKENS[1][0], "It is not an easy matchup against LA."),  # negated
+    (BOWERS_PICKENS[1][1], "Pickens has a top-third matchup against PHI."),
+])
+def test_matchup_words_that_fit_the_label_pass(row, text):
+    d = directions.directions("Next matchup", {"Next matchup": ONE(row)})
+    assert not directions.contradictions(text, d)
+
+
+def test_the_label_is_in_the_facts_and_a_bye_is_said():
+    d = directions.directions("Next matchup", {"Next matchup": ONE(BOWERS_PICKENS[1][0])})
+    assert d.lines == ["Brock Bowers's week 7 opponent LA: rank 31 of 32, tough matchup (rank 1 allows the most "
+                       "points; 1-10 favorable, 11-22 neutral, 23-32 tough)."]
+    bye = directions.directions("Next matchup", {"Next matchup": ONE(
+        ["Josh Allen", "BUF", "QB", "7", None, "0", None, None, None, None])})
+    assert bye.lines == ["Josh Allen is on bye in week 7: no game."]
+
+
+def test_a_number_not_in_the_rows_is_found_but_a_difference_is_not():
+    # Smoke question 10: "4.4 more half-PPR points per game (17.1 vs 13.1)"; the gap is 4.0.
+    allowed = directions.numbers_in(["17.1", "13.1", "29.7", "29.3"])
+    assert directions.unknown_numbers("Bowers has 4.4 more points per game (17.1 vs 13.1).", allowed) == \
+        [("Bowers has 4.4 more points per game (17.1 vs 13.1).", "4.4")]
+    assert not directions.unknown_numbers("Bowers has 4 more points per game (17.1 vs 13.1).", allowed)
 
 
 def test_head_to_head_lines_say_who_leads_each_metric():

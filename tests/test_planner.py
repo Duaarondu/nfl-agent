@@ -58,3 +58,26 @@ def test_names_are_dropped_for_a_single_player_type(model):
 def test_compare_keyword_fallback(model):
     model.replies = [meterless.MeterlessError("down")]
     assert planner.plan("r1", COMPARE) == planner.Route(None, "compare", "keyword")
+
+
+def test_a_name_the_question_does_not_contain_is_dropped(model, trace_dir):
+    # Smoke run: "Johnson or McBride?" came back as Brock Bowers and Trey McBride.
+    model.replies = ['{"player_name": "Brock Bowers", "player_names": ["Brock Bowers", "Trey McBride"], '
+                     '"question_type": "compare"}']
+    route = planner.plan("r1", "Who should I start, Johnson or McBride?")
+    assert route == planner.Route("Trey McBride", "compare", "model", ("Trey McBride",))
+    [fix] = [l for l in read_trace(trace_dir) if l["status"] == "corrected"]
+    assert fix["dropped_names"] == ["Brock Bowers"]
+
+
+def test_a_suffix_or_case_does_not_drop_a_name(model):
+    model.replies = [classify("Deebo Samuel Sr.", "waiver")]
+    assert planner.plan("r1", "should i pick up deebo samuel?").player_name == "Deebo Samuel Sr."
+
+
+def test_pick_up_x_is_waiver_unless_a_player_is_out(model, trace_dir):
+    # Smoke run eef583ef739b: the model called "Should I pick up Deebo Samuel?" a replacement question.
+    model.replies = [classify("Deebo Samuel", "replacement")]
+    assert planner.plan("r1", "Should I pick up Deebo Samuel?") == planner.Route("Deebo Samuel", "waiver", "model")
+    model.replies = [classify("Mike Evans", "replacement")]
+    assert planner.plan("r2", C2).question_type == "replacement"

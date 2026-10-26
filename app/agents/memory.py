@@ -184,11 +184,12 @@ def resolve_players(names: list[str]) -> tuple[dict[str, RosterPlayer], list[str
     """
     if not names:
         return {}, [], None
-    full = [n.lower() for n in names if " " in n.strip()]
+    full = list(dict.fromkeys(factor_queries.without_suffix(n).lower() for n in names if " " in n.strip()))
     surnames = [n.lower() for n in names if " " not in n.strip()]
     conditions = []
     if full:
-        conditions.append("LOWER(r.full_name) IN (" + ", ".join(_quote(n) for n in full) + ")")
+        conditions.append(factor_queries.SQL_NAME.format(col="r.full_name") + " IN ("
+                          + ", ".join(_quote(n) for n in full) + ")")  # "Deebo Samuel" finds "Deebo Samuel Sr."
     conditions += [f"LOWER(r.full_name) LIKE {_quote('% ' + n)}" for n in surnames]
     positions = ", ".join(_quote(p) for p in SKILL_POSITIONS)
     sql = (

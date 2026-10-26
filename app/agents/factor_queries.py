@@ -124,6 +124,17 @@ def says_out(question: str, name: str | None = None) -> bool:
     return bool(key) and re.search(rf"\b{re.escape(key[-1])}(?:['’]s)?\s+{OUT_PHRASE}", question, re.I) is not None
 
 
+# Words that ask who takes over: "Who becomes the Bucs' WR1?", "Who replaces Evans?"
+REPLACEMENT_CUE = re.compile(r"\b(becomes?|replace|replaces|takes? over|next man up|wr1|rb1|te1)\b", re.I)
+PICKUP_CUE = re.compile(r"\b(pick (?:him )?up|add|grab|claim|waiver)\b", re.I)
+
+
+def is_pickup_question(question: str) -> bool:
+    """"Should I pick up Deebo Samuel?": a waiver question, not a replacement one, unless
+    the question says a player is out or asks who takes over (run eef583ef739b)."""
+    return bool(PICKUP_CUE.search(question)) and not REPLACEMENT_CUE.search(question) and not says_out(question)
+
+
 def guess_question_type(question: str) -> str:
     """Keyword fallback for when the model cannot classify the question."""
     text = question.lower()
@@ -132,7 +143,7 @@ def guess_question_type(question: str) -> str:
     if is_compare_question(question):
         return "compare"
     # "Should I pick up a 49ers receiver if Evans misses time?" asks who replaces him.
-    if re.search(r"\b(becomes?|replace|replaces|takes? over|next man up|wr1|rb1|te1)\b", text) or says_out(text):
+    if REPLACEMENT_CUE.search(text) or says_out(text):
         return "replacement"
     if re.search(r"\b(start|sit|bench|flex)\b", text):
         return "start_sit"
@@ -181,15 +192,28 @@ def name_candidates(question: str) -> list[str]:
     return seen[:MAX_NAME_CANDIDATES]
 
 
+# A generational suffix at the end of a name: "Deebo Samuel Sr." is "Deebo Samuel".
+NAME_SUFFIX = re.compile(r"\s+(?:jr|sr|ii|iii|iv)\.?$", re.I)
+SQL_NAME = "REGEXP_REPLACE(LOWER({col}), ' (jr|sr|ii|iii|iv)[.]?$', '')"  # the same, in SQL
+
+
+def without_suffix(name: str) -> str:
+    return NAME_SUFFIX.sub("", name.strip())
+
+
 def lookup_sql(candidates: list[str], season: int) -> str:
-    """Latest roster row this season for each skill player whose full name is a candidate."""
-    names = ", ".join(_quote(c) for c in candidates)
+    """Latest roster row this season for each skill player whose full name is a candidate.
+
+    Names match without a Jr./Sr./II/III/IV suffix on either side, so "Deebo Samuel"
+    finds "Deebo Samuel Sr." (smoke run eef583ef739b found nobody).
+    """
+    names = ", ".join(_quote(c) for c in dict.fromkeys(without_suffix(c).lower() for c in candidates))
     positions = ", ".join(_quote(p) for p in SKILL_POSITIONS)
     return (
         "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week "
         "FROM NFLVERSE.rosters r "
         "JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters "
-        f"WHERE season = {season} AND LOWER(full_name) IN ({names}) GROUP BY gsis_id) latest "
+        f"WHERE season = {season} AND {SQL_NAME.format(col='full_name')} IN ({names}) GROUP BY gsis_id) latest "
         "ON r.gsis_id = latest.gsis_id AND r.week = latest.week "
         f"WHERE r.season = {season} AND r.position IN ({positions}) "
         "ORDER BY r.full_name"
@@ -499,11 +523,15 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
 
 
 def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> list[PlannedQuery]:
-    """Status, team usage and depth chart: for waiver, start/sit and replacement questions."""
+    """Status, team usage and depth chart: for waiver, start/sit and replacement questions.
+
+    A QB gets no team usage query: target share measures receivers, and the factor agent
+    turned a TE's 18.9% into "the highest target share among BUF QBs" (smoke run, Josh Allen).
+    """
     team = _quote(p.team)
     pos = p.position if p.position in SKILL_POSITIONS else "WR"
     recent = max(1, latest_week - 1)
-    return [
+    bundle = [
         status_query(p, season),
         PlannedQuery(
             "Team usage",
@@ -525,6 +553,7 @@ def team_bundle(p: Player, season: int, latest_week: int, s: Scoring = PPR) -> l
             "ORDER BY pos_rank LIMIT 25",
         ),
     ]
+    return [q for q in bundle if not (p.position == "QB" and q.factor == "Team usage")]
 
 
 def games_without_query(p: Player, season: int, s: Scoring = PPR) -> PlannedQuery:
@@ -622,7 +651,9 @@ def matchup_query(
     """Each player's opponent and that defense's average points allowed per game to the
     player's position, ranked (1 = most allowed), in the league's scoring.
 
-    week: the week the question names; else each team's next game after latest_week.
+    week: the week the question names; else the week after the latest stats week
+    (latest_week + 1), not each team's next game, so a team with no game that week is on
+    bye: Josh Allen's "this week" was week 7, a BUF bye, not BAL in week 8 (smoke run).
     A team with no game that week gets a row with no opponent (on bye); played = 1 when
     the game already has a score. opp_games is how many games the average is over.
     """
@@ -636,12 +667,9 @@ def matchup_query(
              f"WHERE season = {season} "
              "UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules "
              f"WHERE season = {season})")
-    if week is None:
-        target = f"target AS (SELECT team, MIN(week) AS week FROM games WHERE week > {latest_week} GROUP BY team)"
-        which = f"next opponent after week {latest_week}"
-    else:
-        target = f"target AS (SELECT DISTINCT team, {int(week)} AS week FROM players)"
-        which = f"week {int(week)} opponent"
+    week = latest_week + 1 if week is None else int(week)
+    target = f"target AS (SELECT DISTINCT team, {week} AS week FROM players)"
+    which = f"week {week} opponent"
     return PlannedQuery(
         "Next matchup",
         f"{names}: {which} and its average {s.label} points allowed per game to the position "
@@ -1297,6 +1325,15 @@ def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], l
         start, bench = (a, b) if pa > pb else (b, a)
         why = f"Rule: start the player with more {label} points per game: {a} {_fmt(pa)} vs {b} {_fmt(pb)}."
     return f"Start {start} over {bench}", f"{why} Decided by {decided_by}."
+
+
+def matchup_label(rank: float | None, teams: float | None = 32) -> str | None:
+    """favorable, neutral or tough, by the opponent's points-allowed rank (1 = allows the
+    most): ranks 1-10 of 32 favorable, 11-22 neutral, 23-32 tough (scaled for other counts)."""
+    if rank is None:
+        return None
+    r = rank * 32 / teams if teams else rank
+    return "favorable" if r <= 10 else "neutral" if r <= 22 else "tough"
 
 
 def on_bye(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
