@@ -340,6 +340,11 @@ def analyze(
         if suggestion:  # a misspelt name ("Justin Jeffersen")
             raise AnalystError("Could not find the NFL player this question is about in this season's rosters. "
                                f"Did you mean {suggestion}? Name the player in full.")
+        other = _other_position(run_id, question, season) if season else None
+        if other:  # QA: "Should I start Harrison Butker?" got "I answer questions about specific players"
+            article = "an" if other[1][:1] in "AEFHILMNORSX" else "a"  # "an OL", "an LB", "a K"
+            raise AnalystError(f"{other[0]} is {article} {other[1]} ({other[2]}). I cover QBs, RBs, WRs and TEs only, "
+                               "so I can't rate kickers, defenders or linemen.")
         raise AnalystError(NO_PLAYER_MESSAGE)
 
     window = _factor_window(started + TOTAL_BUDGET - time.perf_counter())
@@ -442,6 +447,21 @@ def _closest_name(run_id: str, question: str, season: int) -> str | None:
     if record.error:
         return None
     return factor_queries.closest_name(question, [str(r[0]) for r in record.rows])
+
+
+def _other_position(run_id: str, question: str, season: int) -> tuple[str, str, str] | None:
+    """(name, position, team) of a non-skill player the question names in full, if any."""
+    names = ", ".join(factor_queries._quote(c) for c in dict.fromkeys(
+        factor_queries.name_key(c) for c in factor_queries.name_candidates(question)) if c)
+    if not names:
+        return None
+    positions = ", ".join(factor_queries._quote(p) for p in factor_queries.SKILL_POSITIONS)
+    sql = ("SELECT full_name, position, team FROM NFLVERSE.rosters "
+           f"WHERE season = {season} AND {factor_queries.SQL_NAME.format(col='full_name')} IN ({names}) "
+           f"AND position NOT IN ({positions}) ORDER BY week DESC LIMIT 1")
+    record = QueryRecord(1, "non-skill players the question names", sql)
+    _run_query(run_id, record, action="name_suggestion")
+    return tuple(str(x) for x in record.rows[0][:3]) if not record.error and record.rows else None
 
 
 def _lookup_summary(queries: list[QueryRecord]) -> str:

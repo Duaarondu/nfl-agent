@@ -28,8 +28,8 @@ def test_lookup_finds_players_in_question_order(real_sample):
 
 def test_lookup_quotes_apostrophes(real_sample):
     sql = fq.lookup_sql(fq.name_candidates("Is De'Zhaun Stribling worth it?"), SEASON)
-    assert "'de''zhaun stribling'" in sql
-    run_sql(sql)  # runs without a syntax error
+    assert "'dezhaun stribling'" in sql  # names match on a key without punctuation (QA, 26 Oct)
+    assert [p.name for p in fq.parse_players(run_sql(sql)["data"], "De'Zhaun Stribling")] == ["De'Zhaun Stribling"]
 
 
 @pytest.mark.parametrize("bundle", ["why", "team"])

@@ -57,11 +57,14 @@ the scoring (PPR, half-PPR or standard) and players on their roster. Write each 
 short statement like "12-team league", "half-PPR scoring", "My WR is Davante Adams",
 "I dropped Mike Evans". Reply [] if there are none."""
 
-TEAMS = re.compile(r"\b(\d{1,2})[- ]team\b", re.I)
+# Casual words are not league facts (QA, 26 October 2026): "a 3-team trade", "a standard
+# start", "half of the snaps", "if I picked up Jennings" were all stored.
+TEAMS = re.compile(r"\b(\d{1,2})[- ]team\b(?![- ](?:trade|deal|parlay|teaser))", re.I)
 # ".5 ppr", ".5ppr", "1/2 ppr", "in half", "half point" (QA run: all missed).
 HALF = re.compile(r"\bhalf[- ]?(?:point[- ]?)?(?:ppr|point)\b|(?<![\w.])0?\.5[- ]?ppr\b|\b1/2[- ]?(?:point[- ]?)?ppr\b"
-                  r"|\bin (?:a )?half(?:[- ]ppr)?(?: league)?\b(?! the)", re.I)
-STANDARD = re.compile(r"\bnon[- ]?ppr\b|\bstandard\b(?!\s+(?:qb|rb|wr|te|flex|starter)s?\d*\b)", re.I)  # not "a standard WR3"
+                  r"|\bin (?:a )?half(?:[- ]ppr)?(?: league)?\b(?! the| of)", re.I)
+STANDARD = re.compile(r"\bnon[- ]?ppr\b|\bstandard\b(?!\s+(?:qb|rb|wr|te|flex|starter|start|play|week|matchup|"
+                      r"deviation|game)s?\d*\b)", re.I)  # not "a standard WR3"
 FULL = re.compile(r"\bfull[- ]?ppr\b|\b\d{1,2}[- ]team ppr\b|\bppr (?:league|scoring|format)\b|\b(?:league|scoring) is ppr\b"
                   r"|\b(?:we|i) play (?:full[- ])?ppr\b|\bswitched to (?:full[- ])?ppr\b", re.I)
 # "switched from half-PPR to full PPR": the scoring after "to" is the league's now.
@@ -71,7 +74,7 @@ CUES = re.compile(r"\b(?:my|our) (?:league|team|roster|scoring|bench|(?:starting
 _POS = r"(?:QB|RB|WR|TE|FLEX)s?"
 ROSTER_CUE = re.compile(
     rf"\bmy (?:{_POS}|team|roster|starters?|bench|guys)\s+(?:is|are|includes?|has|have)\s+"
-    r"|\bmy roster:\s*|\bI (?:have|own|rostered|drafted|picked up|added)\s+", re.I)
+    r"|\bmy roster:\s*|(?<!\bif )(?<!\bwhen )\bI (?:have|own|rostered|drafted|picked up|added)\s+", re.I)
 DROP_CUE = re.compile(r"\bI (?:dropped|cut|released|traded(?: away)?)\s+", re.I)
 NAME = re.compile(r"[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,2}")
 # A name just before "on my bench" or "in my (starting) lineup": "Pickens is in my lineup".
@@ -169,7 +172,7 @@ def mine_facts(text: str) -> list[Fact]:
     """League and roster facts in the text, by regex. Players are not resolved yet."""
     facts = []
     m = TEAMS.search(text)
-    if m:
+    if m and 4 <= int(m.group(1)) <= 32:  # a league, not "a 2-team parlay"
         facts.append(Fact("teams", m.group(1)))
     scoring = scoring_in(text)
     if scoring:
@@ -204,7 +207,7 @@ def resolve_players(names: list[str]) -> tuple[dict[str, RosterPlayer], list[str
     """
     if not names:
         return {}, [], None
-    full = list(dict.fromkeys(factor_queries.without_suffix(n).lower() for n in names if " " in n.strip()))
+    full = list(dict.fromkeys(factor_queries.name_key(n) for n in names if " " in n.strip()))
     surnames = [n.lower() for n in names if " " not in n.strip()]
     conditions = []
     if full:

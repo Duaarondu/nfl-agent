@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -316,11 +317,11 @@ def closest_name(question: str, names: list[str]) -> str | None:
 
 
 def name_candidates(question: str) -> list[str]:
-    """Every run of 2-3 words in the question, lowercased: possible full names."""
-    words = re.findall(r"[A-Za-z][A-Za-z.'\-]*", question.replace("’", "'"))
+    """Every run of 2-4 words in the question, lowercased: possible full names ("Amon Ra St Brown")."""
+    words = re.findall(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.'\-]*", question.replace("’", "'"))
     words = [_strip_word(w) for w in words]
     seen: list[str] = []
-    for size in (2, 3):
+    for size in (2, 3, 4):
         for i in range(len(words) - size + 1):
             candidate = " ".join(words[i : i + size]).lower()
             if candidate not in seen:
@@ -340,7 +341,11 @@ def _strip_word(w: str) -> str:
 
 # A generational suffix at the end of a name: "Deebo Samuel Sr." is "Deebo Samuel".
 NAME_SUFFIX = re.compile(r"\s+(?:jr|sr|ii|iii|iv)\.?$", re.I)
-SQL_NAME = "REGEXP_REPLACE(LOWER({col}), ' (jr|sr|ii|iii|iv)[.]?$', '')"  # the same, in SQL
+# name_key in SQL: accents folded, punctuation dropped, hyphens as spaces, no suffix.
+# Plain REPLACE, not a global regex: DuckDB's REGEXP_REPLACE changes the first match only
+# unless given 'g', which Spark (live Zetaris) does not accept.
+SQL_NAME = ("REGEXP_REPLACE(REPLACE(REPLACE(REPLACE(TRANSLATE(LOWER({col}), 'àáâäãåèéêëìíîïòóôöõùúûüñç', "
+            "'aaaaaaeeeeiiiiooooouuuunc'), '.', ''), CHR(39), ''), '-', ' '), ' (jr|sr|ii|iii|iv|v)$', '')")
 
 
 def without_suffix(name: str) -> str:
@@ -353,7 +358,7 @@ def lookup_sql(candidates: list[str], season: int) -> str:
     Names match without a Jr./Sr./II/III/IV suffix on either side, so "Deebo Samuel"
     finds "Deebo Samuel Sr." (smoke run eef583ef739b found nobody).
     """
-    names = ", ".join(_quote(c) for c in dict.fromkeys(without_suffix(c).lower() for c in candidates))
+    names = ", ".join(_quote(c) for c in dict.fromkeys(name_key(c) for c in candidates) if c)
     positions = ", ".join(_quote(p) for p in SKILL_POSITIONS)
     return (
         "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week "
@@ -1714,8 +1719,11 @@ NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
 
 
 def name_key(name: str) -> str:
-    """'Deebo Samuel Sr.' and 'deebo samuel' -> 'deebo samuel' (sources disagree on suffixes)."""
-    tokens = re.sub(r"[^a-z ]", " ", name.lower().replace("'", "")).split()
+    """'Deebo Samuel Sr.' and 'deebo samuel' -> 'deebo samuel' (sources disagree on suffixes);
+    'A.J. Brown' and 'AJ Brown' -> 'aj brown'; 'Audric Estimé' -> 'audric estime'. SQL_NAME
+    computes the same key in SQL (QA, 26 October 2026: "AJ Brown", "Estimé" were not found)."""
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    tokens = re.sub(r"[^a-z -]", "", plain).replace("-", " ").split()
     return " ".join(t for t in tokens if t not in NAME_SUFFIXES)
 
 

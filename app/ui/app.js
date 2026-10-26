@@ -298,6 +298,7 @@ function renderResult(r) {
       el("span", { class: `tag ${steps.final_verdict === "model" ? "nightshift" : "rules"}`,
                    text: steps.final_verdict === "model" ? "verdict by Nemotron" : "verdict by code rules" }),
     ),
+    r.question ? el("p", { class: "disclaimer asked", text: `Question: ${r.question}` }) : null, // QA: the box may say something else by now
     el("p", { class: "answer", text: finalText }),
     sampleMode && !modelConfigured ? el("p", { class: "disclaimer sample-notice", text: SAMPLE_NOTICE }) : null,
     el("p", { class: "disclaimer", text: r.disclaimer }),

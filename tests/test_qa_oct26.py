@@ -293,3 +293,36 @@ def test_an_absence_that_did_not_raise_his_usage_is_weak(no_model):
 def test_counts_of_one_are_singular(no_model):
     answer = ask("Why is Christian Watson scoring so many fantasy points this season?").result.answer
     assert "(1 games)" not in answer and "1 losses" not in answer
+
+
+@pytest.mark.parametrize("question, name", [
+    ("Should I start AJ Brown?", "A.J. Brown"), ("Should I start CJ Stroud?", "C.J. Stroud"),
+    ("Should I start TJ Hockenson?", "T.J. Hockenson"), ("Should I start Jamarr Chase?", "Ja'Marr Chase"),
+    ("Why is Jaxon Smith Njigba so good?", "Jaxon Smith-Njigba"),
+    ("Should I start Amon Ra St Brown?", "Amon-Ra St. Brown"),
+    ("Should I pick up Audric Estime?", "Audric Estimé"), ("Should I pick up Audric Estimé?", "Audric Estimé"),
+])
+def test_names_match_without_their_punctuation_or_accents(no_model, question, name):
+    # Before: 422 "Did you mean A.J. Brown?", or no suggestion at all.
+    assert ask(question).result.player.name == name
+
+
+@pytest.mark.parametrize("question", [
+    "Is Jared Goff a standard start this week?",                    # was stored as standard scoring
+    "Jahmyr Gibbs plays in half of the snaps, should I start him?",  # was half-PPR
+    "Was Jared Goff part of a 3-team trade?",                       # was a 3-team league
+    "If I picked up Jauan Jennings, would he start?",               # was a rostered player
+])
+def test_casual_wording_is_not_a_league_fact(question):
+    from app.agents.memory import mine_facts
+    assert mine_facts(question) == []
+
+
+@pytest.mark.parametrize("question, reply", [
+    ("Should I start Harrison Butker this week?", "Harrison Butker is a K (KC). I cover QBs, RBs, WRs and TEs only"),
+    ("Should I start Micah Parsons?", "Micah Parsons is an LB (GB). I cover QBs, RBs, WRs and TEs only"),
+])
+def test_a_non_skill_player_gets_a_clear_reply(no_model, question, reply):
+    from app.agents.analyst import AnalystError
+    with pytest.raises(AnalystError, match=reply.replace("(", r"\(").replace(")", r"\)")):
+        ask(question)
