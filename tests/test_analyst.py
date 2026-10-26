@@ -108,7 +108,7 @@ def test_calls_disable_thinking_and_have_timeouts(real_sample, model):
     assert all(k["chat_template_kwargs"] == {"enable_thinking": False} for k in model.kwargs)
     by_prompt = {c[0]["content"]: k for c, k in zip(model.calls, model.kwargs)}
     assert by_prompt[analyst.CLASSIFY_PROMPT]["timeout"] == analyst.CLASSIFY_TIMEOUT
-    assert by_prompt[analyst.FACTOR_PROMPT]["timeout"] == analyst.CALL_TIMEOUT == 60
+    assert by_prompt[analyst.FACTOR_PROMPT]["timeout"] == analyst.FACTOR_TIMEOUT == 10
     assert 0 < by_prompt[analyst.VERDICT_PROMPT]["timeout"] <= 60
 
 
@@ -334,6 +334,7 @@ def test_hung_call_is_cut_off_at_the_per_call_limit(real_sample, model, monkeypa
 
 def test_repair_retry_skipped_when_the_budget_is_nearly_used(real_sample, model, monkeypatch, trace_dir):
     monkeypatch.setattr(analyst, "MIN_RETRY_SECONDS", 10_000)
+    monkeypatch.setattr(analyst, "CALL_TIMEOUT", 10_000)  # a retry needs the shorter of the two
     script(model, classify("Christian Watson", "why"), answer="not json")
     assert analyze(WATSON_WHY).verdict_by == "rule-based"
     assert any(l["action"] == "model_call" and l["status"] == "skipped" for l in read_trace(trace_dir))
@@ -357,10 +358,10 @@ def test_agents_get_the_corrected_question_and_result_keeps_the_original(real_sa
 
 
 @pytest.mark.parametrize("left, window", [
-    (150, 85),  # fast queries: the usual cap
-    (120, 75),  # what is left after the verdict's reserve
-    (61, 60),   # slow queries (run 1f70a86c1057 had 16s): still the guaranteed minimum
-    (-30, 60),  # queries ran past the whole budget
+    (150, 15),  # fast queries: the usual cap
+    (58, 13),   # what is left after the verdict's reserve
+    (50, 10),   # slow queries: still the guaranteed minimum
+    (-30, 10),  # queries ran past the whole budget
 ])
 def test_factor_window_has_a_guaranteed_minimum(left, window):
     assert analyst._factor_window(left) == window
@@ -430,7 +431,13 @@ def test_compare_question_looks_up_and_queries_both_players(real_sample, model):
         assert not q.error, q.error
         names = {row[q.headers.index("player")] for row in q.rows}
         assert names == set(PAIR), q.factor
-    assert {f.favours for f in result.factors} == {"George Pickens"}
+    # Every agent said Pickens; in the later weeks Williams leads (15.5 to 14.1 per game),
+    # so that summary is replaced by the code's, which favours Williams.
+    by_factor = {f.factor: f for f in result.factors}
+    trend = by_factor.pop("Recent trend")
+    assert trend.rated_by == "rule-based" and trend.favours == "Jameson Williams"
+    assert "model summary replaced: it says this factor favours George Pickens" in trend.rule
+    assert {f.favours for f in by_factor.values()} == {"George Pickens"}
     assert result.answer.startswith("Start George Pickens over Jameson Williams")
 
 
@@ -555,3 +562,67 @@ def test_start_sit_rates_the_matchup_for_the_named_week(real_sample, model):
     facts = calls_for(model, analyst.FACTOR_PROMPT)
     [m] = [c for c in facts if "Factor: Next matchup" in c[1]["content"]]
     assert "Trey McBride (ARI) plays DEN in week 7" in m[1]["content"]
+
+
+# --- factor direction computed in code; first verdict hard rules ---
+
+
+def test_factor_agents_get_the_directions_computed_in_code(real_sample, model):
+    script_compare(model)
+    analyze(COMPARE)
+    [m] = [c for c in calls_for(model, analyst.COMPARE_FACTOR_PROMPT) if "Factor: Next matchup" in c[1]["content"]]
+    assert "Directions (computed in code; your summary and rating must agree with them):" in m[1]["content"]
+    assert "- Easier matchup: George Pickens (PHI allow 38.3, rank 3) over Jameson Williams (GB allow 33, rank 14)" \
+        in m[1]["content"]
+
+
+def test_a_reversed_matchup_summary_is_replaced_by_the_code_summary(real_sample, model, trace_dir):
+    script_compare(model, favours={"Next matchup": json.dumps({
+        "favours": "Jameson Williams", "support": "strong",
+        "summary": "Jameson Williams faces the easier matchup: GB allow 33 to PHI's 38.3."})})
+    result = analyze(COMPARE)
+    matchup = next(f for f in result.factors if f.factor == "Next matchup")
+    assert (matchup.rated_by, matchup.favours) == ("rule-based", "George Pickens")
+    assert matchup.summary.startswith("George Pickens (DAL) plays PHI in week 7: PHI allow 38.3")
+    assert "model summary replaced: it says this factor favours Jameson Williams" in matchup.rule
+    [line] = [l for l in read_trace(trace_dir) if l["action"] == "rate_factor" and l["status"] == "replaced"
+              and l["agent_name"] == "factor_agent:Next matchup"]
+    assert line["model_summary"].startswith("Jameson Williams")
+
+
+def test_absences_raising_his_share_is_replaced(real_sample, model):
+    script(model, classify("Christian Watson", "why"), factors={
+        "Teammate absences": rating("strong", "Teammate absences in weeks 3-6 increased Watson's target share."),
+    })
+    result = analyze(WATSON_WHY)
+    absences = next(f for f in result.factors if f.factor == "Teammate absences")
+    assert absences.rated_by == "rule-based" and absences.summary.startswith("Week 3: Jayden Reed")
+    assert "it says target share rose, but it fell in the weeks a teammate was out" in absences.rule
+
+
+def test_first_verdict_gets_hard_rules_for_a_replacement(real_sample, model):
+    from app.agents.memory import RosterPlayer, UserContext
+
+    script(model, classify("Mike Evans", "replacement"), answer=verdict("Pick up George Kittle", "24.9%."))
+    memory = UserContext(user_id="t", remembered=True,
+                         roster=[RosterPlayer("00-0033288", "Christian McCaffrey", "SF", "RB")])
+    analyze(BUCS, memory=memory)
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    prompt = call[1]["content"]
+    rules = prompt[prompt.index("Hard rules (computed in code; follow every one):"):]
+    assert "- Never recommend Mike Evans: the question says he is out." in rules
+    assert "- Never recommend picking up Christian McCaffrey: already on the user's roster." in rules
+    assert '- The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.' in rules
+    assert "Mike Evans WR" in rules and "George Kittle TE" in rules and "Christian McCaffrey RB" in rules
+
+
+def test_first_compare_verdict_gets_the_leaders(real_sample, model):
+    script_compare(model)
+    analyze(COMPARE)
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    prompt = call[1]["content"]
+    assert "- PPR points per game: Jameson Williams 11.5 vs George Pickens 13.6: George Pickens leads." in prompt
+    assert ("- PPR points per game in the later weeks: Jameson Williams 17.5 vs George Pickens 16.9: "
+            "Jameson Williams leads.") in prompt
+    assert "If one player leads on both, start him" in prompt
+    assert "Positions (from the rosters): " in prompt and "George Pickens WR" in prompt

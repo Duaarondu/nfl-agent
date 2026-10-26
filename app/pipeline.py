@@ -73,7 +73,7 @@ def review(result: AnalystResult, started: float | None = None, model_review: bo
         critiques.append(found)
         if not found.blocking or last:
             break
-        analyst.revise_verdict(result, [_for_prompt(i) for i in found.blocking], deadline, round)
+        analyst.revise_verdict(result, [critic.as_rule(i) for i in found.blocking], deadline, round)
 
     approved = not critiques[-1].blocking
     if not approved:
@@ -82,11 +82,6 @@ def review(result: AnalystResult, started: float | None = None, model_review: bo
     trace(run_id, critic.AGENT_NAME, "final", "approved" if approved else "unresolved",
           rounds=len(critiques), revisions=len(critiques) - 1, duration_ms=round_ms(seconds))
     return PipelineResult(result, first_answer, critiques, approved, seconds)
-
-
-def _for_prompt(issue: critic.Issue) -> str:
-    claim = issue.claim if len(issue.claim) <= 200 else issue.claim[:200] + "..."
-    return f'{issue.check}: "{claim}" -> {issue.reason}'
 
 
 def round_ms(seconds: float) -> int:

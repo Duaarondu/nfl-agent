@@ -32,7 +32,7 @@ def script(model, verdicts, revised=None, review=NO_ISSUES, summaries=None):
             name = user.split("Factor: ")[1].split("\n")[0]
             return json.dumps({"support": "moderate", "summary": summaries.get(name, f"{name} facts.")})
         if system == analyst.VERDICT_PROMPT:
-            pool = revised if "A critic checked it" in user else verdicts
+            pool = revised if "Rules from a check against the data" in user else verdicts
             return pool.pop(0) if len(pool) > 1 else pool[0]
         if system == critic.REVIEW_PROMPT:
             return review
@@ -57,7 +57,9 @@ def test_flagged_verdict_is_revised_then_approved(real_sample, model, trace_dir)
     assert len(calls(model, analyst.FACTOR_PROMPT)) == 3
     assert len(calls(model, analyst.VERDICT_PROMPT)) == 2
     revision_prompt = calls(model, analyst.VERDICT_PROMPT)[1][-1]["content"]
-    assert f"Your previous answer:\n{SAMUEL_LEAD}" in revision_prompt
+    # The revision gets the facts and the critic's issues as rules, not the previous answer.
+    assert "Rules from a check against the data (follow every one):" in revision_prompt
+    assert "previous answer" not in revision_prompt and SAMUEL_LEAD not in revision_prompt
     assert "trails George Kittle (TE) 24.9% and Christian McCaffrey (RB) 22.8%" in revision_prompt
 
     lines = read_trace(trace_dir)
@@ -69,17 +71,17 @@ def test_flagged_verdict_is_revised_then_approved(real_sample, model, trace_dir)
     ]
 
 
-def test_review_and_revise_get_90s_and_8192_tokens(real_sample, model):
+def test_review_gets_60s_and_revise_65s(real_sample, model):
     script(model, [SAMUEL], revised=[KITTLE])
     pipeline.answer(BUCS)
     by_step = {}
     for c, k in zip(model.calls, model.kwargs):
-        step = "revise" if "A critic checked it" in c[-1]["content"] else c[0]["content"]
+        step = "revise" if "Rules from a check against the data" in c[-1]["content"] else c[0]["content"]
         by_step.setdefault(step, []).append(k)
     review, revise = by_step[critic.REVIEW_PROMPT][0], by_step["revise"][0]
     verdict = by_step[analyst.VERDICT_PROMPT][0]
-    assert (review["timeout"], review["max_tokens"]) == (90, 8192)
-    assert (revise["timeout"], revise["max_tokens"]) == (90, 8192)
+    assert (review["timeout"], review["max_tokens"]) == (60, 8192)
+    assert (revise["timeout"], revise["max_tokens"]) == (65, 8192)
     assert (verdict["timeout"], verdict["max_tokens"]) == (60, 4096)  # the first verdict is unchanged
     assert pipeline.RUN_BUDGET == 360
 

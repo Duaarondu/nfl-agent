@@ -278,7 +278,7 @@ def test_critic_sends_a_rostered_pickup_back(real_sample, memory_dir, model):
         if system == analyst.FACTOR_PROMPT:
             return json.dumps({"support": "moderate", "summary": "Facts."})
         if system == analyst.VERDICT_PROMPT:
-            return verdicts[1] if "A critic checked it" in user else verdicts[0]
+            return verdicts[1] if "Rules from a check against the data" in user else verdicts[0]
         raise AssertionError(system[:60])
 
     model.respond = respond

@@ -1170,6 +1170,7 @@ def compare_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]
 
 START_PPR = 12.0  # points per game (in the league's scoring) at or above which a start/sit rule says start
 PICKUP_SHARE = 15.0  # recent target share (%) at or above which a waiver rule says pick up
+PPG_MARGIN = 0.5  # points per game closer than this are level (compare_verdict, critic check (g))
 
 
 # A sentence ends at . ! or ? before a capital or "(", but not after "Sr." / "Jr." or a

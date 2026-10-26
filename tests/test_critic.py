@@ -117,7 +117,7 @@ def test_a_number_not_in_the_data_blocks():
 
 def test_a_bad_number_in_a_model_factor_summary_is_recorded_without_blocking():
     result = load_example(WATSON)
-    result.factors.append(Factor("Big plays", "strong", "He averaged 12.6 yards per target.", [], rated_by="model"))
+    result.factors.append(Factor("Big plays", "strong", "He averaged 17.7 yards per target.", [], rated_by="model"))
     [issue] = issues(result, "numbers")
     assert issue.where == "factor:Big plays" and not issue.blocking
 
@@ -483,3 +483,67 @@ def test_saved_examples_pass_the_new_checks():
     for slug in (WATSON, BUCS, "i-have-jameson-williams", "12-team-half-ppr", "should-i-pick-up"):
         result = load_example(slug)
         assert not [i for i in critic.check_answer(result) if i.check in ("no_data", "position_label") and i.blocking], slug
+
+
+# --- the ellipsis artifact, directions in the answer, and the review's facts and retry ---
+
+
+def test_an_ellipsis_in_the_verdict_blocks():
+    result = with_answer(BUCS, "Pick up George Kittle. ... His 24.9% recent target share leads.")
+    [issue] = [i for i in issues(result, "artifacts") if i.where == "answer"]
+    assert issue.blocking and issue.claim == "..." and "ellipsis" in issue.reason
+
+
+def test_a_reversed_matchup_in_the_answer_blocks(compare_result):
+    compare_result.answer = ("Start George Pickens over Jameson Williams. Pickens scores 13.6 PPR points per game "
+                             "to Williams's 11.5, though Jameson Williams has the easier matchup against GB.")
+    [issue] = issues(compare_result, "direction")
+    assert issue.blocking and "it gives Jameson Williams the easier matchup" in issue.reason
+
+
+def test_a_difference_of_two_cited_numbers_is_allowed(compare_result):
+    compare_result.answer = ("Start George Pickens over Jameson Williams. Pickens scores 13.6 PPR points per game "
+                             "to Williams's 11.5, a 2.1-point edge.")
+    assert not issues(compare_result, "numbers")
+    compare_result.answer = compare_result.answer.replace("2.1-point", "2.4-point")
+    [issue] = issues(compare_result, "numbers")
+    assert issue.reason.startswith("2.4 is not in the cited rows")
+
+
+def test_review_gets_the_premise_as_applied_and_the_depth_chart_order(model):
+    seen = []
+    model.respond = lambda messages: seen.append(messages) or json.dumps({"issues": []})
+    critic.critique(load_example(BUCS), 1, FAR_OFF)
+    [messages] = seen
+    assert "do not object that the data is for a different team" in messages[0]["content"]
+    user = messages[1]["content"]
+    assert "Premise check (already applied; the answer uses the team in the data, so this is not an issue): " \
+           "Mike Evans is on SF in the data" in user
+    assert "Depth chart: Mike Evans is WR1; if he is out, Deebo Samuel (WR2) is next at WR." in user
+
+
+def test_a_review_with_no_json_is_retried_fresh_with_a_reminder(model, trace_dir):
+    replies = ["The answer looks fine to me.", json.dumps({"issues": []})]
+    model.respond = lambda messages: replies.pop(0)
+    found = critic.critique(with_answer(WATSON, "His 22.2% target share explains it. Verdict: hold Christian Watson."),
+                            1, FAR_OFF)
+    assert found.reviewed_by == "model"
+    first, retry = model.calls
+    assert [m["role"] for m in retry] == ["system", "user"]  # the bad reply is not shown again
+    assert retry[1]["content"] == first[1]["content"] + "\n\nReply with only the JSON object."
+    [line] = [l for l in read_trace(trace_dir) if l["action"] == "parse_reply"]
+    assert line["reply_head"] == "The answer looks fine to me."
+
+
+def test_a_single_issue_object_is_read_as_one_issue(review):
+    review.reply = json.dumps({"claim": "His 22.2% target share explains it", "reason": "It fell to 18.6%."})
+    found = critic.critique(with_answer(WATSON, "His 22.2% target share explains it. Verdict: hold Christian Watson."),
+                            1, FAR_OFF)
+    assert found.reviewed_by == "model" and [i.check for i in found.blocking] == ["model_review"]
+
+
+def test_issues_become_rules_without_the_old_answer():
+    label = critic.Issue("artifacts", "answer", "[strong]", "'[strong]' is a support label copied from the prompt.")
+    assert critic.as_rule(label) == "Do not write '[strong]': a support label copied from the prompt."
+    support = critic.Issue("verdict_support", "answer", "Start Deebo Samuel.", "Samuel trails Kittle.")
+    assert critic.as_rule(support) == "Samuel trails Kittle."

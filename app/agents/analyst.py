@@ -29,7 +29,7 @@ from typing import Any
 
 from app.adapters import meterless
 from app.adapters.zetaris import ZetarisError, run_sql
-from app.agents import factor_queries, planner
+from app.agents import directions, factor_queries, planner
 from app.agents.memory import UserContext, user_context_from_dict
 from app.trace import new_run_id, trace
 
@@ -38,26 +38,28 @@ MAX_QUERIES = 6
 MAX_REPAIRS = 1
 MAX_TURNS = MAX_QUERIES + 4
 ROWS_SHOWN_TO_MODEL = 50
-# Nemotron spends its whole token budget thinking unless this is off. Meterless does
-# not forward it yet (checked 2026-10-22); sent anyway so it works once it does.
+# Nemotron spends its whole token budget thinking unless this is off. Nightshift 1.2.7
+# forwards it (1.2.1 did not, checked 2026-10-22, and still works, only slower).
 MODEL_PARAMS = {"temperature": 0.2, "chat_template_kwargs": {"enable_thinking": False}}
-# The model still thinks before replying; these leave room for that plus the JSON.
+# Room for the JSON, and for the thinking Nightshift 1.2.1 does anyway.
 FACTOR_MAX_TOKENS = 4096
 VERDICT_MAX_TOKENS = 4096
-REVISE_MAX_TOKENS = 8192  # a revision's prompt is longer, and the model thinks through it
+REVISE_MAX_TOKENS = 8192
 # Time limits (seconds). Each model request times out on its own. After the queries
 # finish, the factor agents share one window: what is left of TOTAL_BUDGET minus the
 # verdict's reserve, capped at FACTOR_WINDOW, but never under MIN_FACTOR_WINDOW, so
-# slow live queries no longer squeeze it (16s in run 1f70a86c1057). The verdict call
-# then gets what is left of TOTAL_BUDGET, but never under VERDICT_RESERVE.
-CALL_TIMEOUT = 60
+# slow live queries do not squeeze it. The verdict call then gets what is left of
+# TOTAL_BUDGET, but never under VERDICT_RESERVE. With thinking off (Nightshift 1.2.7) a
+# factor call took 0.4-1.5s, a first verdict up to 46s and a review up to 34s (2026-10-25).
+CALL_TIMEOUT = 60  # the first verdict
+FACTOR_TIMEOUT = 10
 CLASSIFY_TIMEOUT = planner.TIMEOUT
-REVISE_TIMEOUT = 90  # the critic's revision call; the run budget (pipeline.RUN_BUDGET) still caps it
+REVISE_TIMEOUT = 65  # the critic's revision call; the run budget (pipeline.RUN_BUDGET) still caps it
 TOTAL_BUDGET = 150
-FACTOR_WINDOW = 85
-MIN_FACTOR_WINDOW = 60
+FACTOR_WINDOW = 15
+MIN_FACTOR_WINDOW = 10
 VERDICT_RESERVE = 45
-MIN_RETRY_SECONDS = 20  # a repair retry needs at least this long to be worth starting
+MIN_RETRY_SECONDS = 20  # a repair retry needs this long (or the call's own limit, if shorter) to be worth starting
 SUPPORT_LEVELS = ("strong", "moderate", "weak", "not supported")
 SCHEMA = (Path(__file__).parent / "schema.md").read_text(encoding="utf-8")
 # What the factor queries cannot see; listed with every answer.
@@ -331,10 +333,11 @@ def analyze(
     asked = plan.corrected_question(question)
     factors = _rate_factors(run_id, asked, plan, window=window)
     deadline = max(started + TOTAL_BUDGET, time.perf_counter() + VERDICT_RESERVE)
-    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory, plan.name_note())
+    out = factor_queries.says_out(question, plan.player.name)
+    facts = _verdict_facts(asked, context, plan.premise_note(), plan.queries, factors, memory, plan.name_note(),
+                           question_type=plan.question_type, player=plan.player, players=plan.players, out=out)
     verdict = _verdict(run_id, plan.question_type, plan.player, facts, plan.queries, factors, deadline=deadline,
-                       memory=memory, out=factor_queries.says_out(question, plan.player.name), players=plan.players,
-                       name_note=plan.name_note())
+                       memory=memory, out=out, players=plan.players, name_note=plan.name_note())
     result = _assemble(run_id, question, asked, context, plan, factors, verdict, started)
     result.user_context = memory
     return result
@@ -372,23 +375,27 @@ def _factor_window(left: float) -> float:
 
 
 def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, round: int) -> None:
-    """Rerun only the verdict step, with the critic's issues in the prompt; updates result.
+    """Rerun only the verdict step after critic round `round`; updates result.
 
+    The prompt is the verdict's facts plus the critic's issues as rules to follow
+    (critic.as_rule), without the previous answer: shown its previous answer and asked to
+    fix it, Nemotron reasons for 6,000-8,000 tokens even with thinking off (2026-10-25).
     The factor agents are not rerun. If the call fails, the rule-based verdict is used.
     """
     if result.player is None:  # free-SQL answers have no planned facts to re-verdict from
         trace(result.run_id, AGENT_NAME, "revise", "skipped", target_agent="critic", round=round,
               reason="no planned factor queries")
         return
+    out = factor_queries.says_out(result.question, result.player.name)
     facts = _verdict_facts(
         result.asked or result.question, result.season_context, result.premise_correction,
         result.queries, result.factors, result.user_context, result.name_note,
+        question_type=result.question_type, player=result.player, players=result.players, out=out,
     )
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
-        deadline=deadline, revision=(result.answer, issues), memory=result.user_context,
-        out=factor_queries.says_out(result.question, result.player.name), players=result.players,
-        name_note=result.name_note,
+        deadline=deadline, revision=issues, memory=result.user_context, out=out, players=result.players,
+        name_note=result.name_note, round=round,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
@@ -422,21 +429,27 @@ def _evidence(record: QueryRecord) -> list[Evidence]:
 def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list[Factor]:
     """One factor agent (model call) per factor, all in parallel, sharing one time window.
 
-    A factor whose agent fails after its retry, or has no reply when the window
-    closes, is rated with the fixed rules in factor_queries.rule_rating.
+    Each agent gets the factor's directions, computed in code (directions.py: who leads,
+    what rose or fell, which matchup is easier). A factor whose agent fails after its
+    retry, or has no reply when the window closes, is rated with the fixed rules in
+    factor_queries.rule_rating; so is one whose summary contradicts those directions,
+    which then shows the code summary, so a reversed factor is never shown.
     Returns the factors ranked from most to least supported.
     """
     rated = [q for q in plan.queries if q.factor in factor_queries.RATED_FACTORS]
     player_line = _player_line(plan)
     positions = factor_queries.known_positions([(q.headers, q.rows) for q in plan.queries if not q.error])
     head_to_head = len(plan.players) >= 2
+    results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error}
+    subject = plan.player.name if plan.player else None
+    found = {q.factor: directions.directions(q.factor, results, subject) for q in rated if not q.error}
     replies: dict[int, dict[str, Any] | Exception] = {}
     deadline = time.perf_counter() + window
 
     def work(record: QueryRecord) -> None:
         try:
             replies[record.query_id] = _factor_agent(run_id, question, player_line, record, deadline, plan.players,
-                                                     positions)
+                                                     positions, found[record.factor].lines)
         except Exception as error:  # noqa: BLE001 - any failure means the rules take over
             replies[record.query_id] = error
 
@@ -450,27 +463,36 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
     for thread in threads:
         thread.join(max(0.0, deadline - time.perf_counter()))
 
-    results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error}
     factors = []
     for q in rated:
         agent = f"factor_agent:{q.factor}"
         reply = replies.get(q.query_id)
+        wrong = []
         if isinstance(reply, dict):
-            factor = Factor(q.factor, reply["support"], round_numbers(reply["summary"]), _evidence(q),
-                            favours=reply.get("favours"))
-            trace(run_id, agent, "rate_factor", "ok", rated_by="model", support=factor.support,
-                  favours=factor.favours, query_id=q.query_id)
+            summary = round_numbers(reply["summary"])
+            wrong = directions.contradictions(summary, found[q.factor], reply.get("favours"))
+            if not wrong:
+                factor = Factor(q.factor, reply["support"], summary, _evidence(q), favours=reply.get("favours"))
+                trace(run_id, agent, "rate_factor", "ok", rated_by="model", support=factor.support,
+                      favours=factor.favours, query_id=q.query_id)
+                factors.append(factor)
+                continue
+        if wrong:
+            reason = "the model summary contradicts the numbers: " + "; ".join(wrong)
         else:
             reason = "query failed" if q.error else (str(reply) if reply else f"no reply within {window:.0f}s")
-            favours = None
-            if head_to_head and q.factor in factor_queries.COMPARE_FACTORS:
-                favours, support, rule = factor_queries.compare_rating(q.factor, results)
-            else:
-                support, rule = factor_queries.rule_rating(q.factor, results)
-            factor = Factor(q.factor, support, _summary(q), _evidence(q), rated_by="rule-based", rule=rule,
-                            favours=favours)
-            trace(run_id, agent, "rate_factor", "fallback", rated_by="rule-based", support=support,
-                  favours=favours, rule=rule, query_id=q.query_id, reason=reason[:300])
+        favours = None
+        if head_to_head and q.factor in factor_queries.COMPARE_FACTORS:
+            favours, support, rule = factor_queries.compare_rating(q.factor, results)
+        else:
+            support, rule = factor_queries.rule_rating(q.factor, results)
+        if wrong:
+            rule += f"; model summary replaced: {'; '.join(wrong)}"
+        factor = Factor(q.factor, support, _summary(q), _evidence(q), rated_by="rule-based", rule=rule,
+                        favours=favours)
+        trace(run_id, agent, "rate_factor", "replaced" if wrong else "fallback", rated_by="rule-based",
+              support=support, favours=favours, rule=rule, query_id=q.query_id, reason=reason[:300],
+              **({"model_summary": reply["summary"][:300]} if wrong else {}))
         factors.append(factor)
     return sorted(factors, key=lambda f: SUPPORT_LEVELS.index(f.support))
 
@@ -478,9 +500,13 @@ def _rate_factors(run_id: str, question: str, plan: Plan, window: float) -> list
 def _factor_agent(
     run_id: str, question: str, player_line: str, record: QueryRecord, deadline: float,
     players: list[factor_queries.Player] | None = None, positions: dict[str, str] | None = None,
+    direction_lines: list[str] | None = None,
 ) -> dict[str, Any]:
     """Rate one factor; for a compare question, head-to-head: which of the two players it favours."""
     facts = "\n".join(f"- {line}" for line in factor_queries.summarize(record.factor or "", record.headers, record.rows))
+    if direction_lines:
+        facts += "\nDirections (computed in code; your summary and rating must agree with them):\n" + "\n".join(
+            f"- {line}" for line in direction_lines)
     head_to_head = record.factor in factor_queries.COMPARE_FACTORS and players and len(players) >= 2
     label = "Players" if head_to_head else "Player"
     messages = [
@@ -491,7 +517,7 @@ def _factor_agent(
     check = _with_position_check(check, positions or {})
     return _ask_json(
         run_id, "factor", messages, FACTOR_MAX_TOKENS, check,
-        agent_name=f"factor_agent:{record.factor}", timeout=CALL_TIMEOUT, deadline=deadline,
+        agent_name=f"factor_agent:{record.factor}", timeout=FACTOR_TIMEOUT, deadline=deadline,
     )
 
 
@@ -531,12 +557,12 @@ def _check_rating(reply: dict[str, Any]) -> None:
 def _verdict(
     run_id: str, question_type: str, player: factor_queries.Player, facts: list[str],
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
-    revision: tuple[str, list[str]] | None = None, memory: UserContext | None = None, out: bool = False,
-    players: list[factor_queries.Player] | None = None, name_note: str | None = None,
+    revision: list[str] | None = None, memory: UserContext | None = None, out: bool = False,
+    players: list[factor_queries.Player] | None = None, name_note: str | None = None, round: int | None = None,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
-    revision is (previous answer, critic issues) when the critic sent the answer back.
+    revision is the critic's issues as rules when critic round `round` sent the answer back.
     The rule-based stand-in skips players already on the user's roster (memory), and
     never names the player when the question says he is out (out).
     """
@@ -553,7 +579,8 @@ def _verdict(
         note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
-              step="revise" if revision else "verdict", reason=str(error)[:300])
+              step="revise" if revision else "verdict", reason=str(error)[:300],
+              **({"round": round} if revision else {}))
     lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
     return round_numbers(_with_name_note(_compose(question_type, verdict, why, note, lead), name_note)), by
 
@@ -601,8 +628,13 @@ def _check_verdict(reply: dict[str, Any]) -> None:
 
 def _verdict_facts(
     question: str, context: str, premise_note: str | None, queries: list[QueryRecord], factors: list[Factor],
-    memory: UserContext | None = None, name_note: str | None = None,
+    memory: UserContext | None = None, name_note: str | None = None, question_type: str = "other",
+    player: factor_queries.Player | None = None, players: list[factor_queries.Player] | None = None,
+    out: bool = False,
 ) -> list[str]:
+    """The verdict prompt's facts: the rated factors with their directions, then hard
+    rules computed in code (who is out or rostered, the compare leaders, positions)."""
+    results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
     lines = [context]
     if memory and memory.prompt_block():
         lines.append(memory.prompt_block())
@@ -622,7 +654,67 @@ def _verdict_facts(
         lines.append(f"- {f.factor} [{rating}]: {f.summary}")
         if f.favours:  # head-to-head: the verdict needs both players' numbers, not only the agent's sentence
             lines += [f"    {line}" for line in factor_queries.summarize(f.factor, *_rows_of(queries, f.factor))]
+        if f.factor in results:
+            lines += [f"    {line}" for line in directions.directions(f.factor, results, player and player.name).lines]
+    rules = _hard_rules(question_type, player, players or [], results, memory, out, "\n".join(lines))
+    if rules:
+        lines.append("Hard rules (computed in code; follow every one):")
+        lines += [f"- {rule}" for rule in rules]
     return lines
+
+
+def _hard_rules(
+    question_type: str, player: factor_queries.Player | None, players: list[factor_queries.Player],
+    results: dict[str, tuple[list[str], list[list]]], memory: UserContext | None, out: bool, facts: str,
+) -> list[str]:
+    rules = []
+    if player and (out or question_type == "replacement"):
+        rules.append(f"Never recommend {player.name}: the question says he is out.")
+    roster = list(memory.roster_names) if memory else []
+    if roster:
+        rules.append(f"Never recommend picking up {', '.join(roster)}: already on the user's roster.")
+    if question_type == "replacement":
+        rules.append('The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.')
+    if question_type == "compare" and len(players) >= 2:
+        rules += _compare_leaders([p.name for p in players[:2]], results)
+    positions = factor_queries.known_positions(list(results.values()))
+    if player and player.position:
+        positions.setdefault(player.name, player.position)
+    for p in players:
+        if p.position:
+            positions.setdefault(p.name, p.position)
+    named = [f"{n} {pos}" for n, pos in positions.items()
+             if (last := factor_queries.name_key(n).split()[-1:]) and re.search(rf"\b{re.escape(last[0])}\b", facts, re.I)]
+    if named:
+        rules.append("Positions (from the rosters): " + "; ".join(named[:12])
+                     + ". Use a label like WR1 or TE1 only with the player's own position.")
+    return rules
+
+
+def _compare_leaders(names: list[str], results: dict[str, tuple[list[str], list[list]]]) -> list[str]:
+    """Who leads on points per game and in the later weeks, as critic check (g) compare tests them."""
+    usage, trend = results.get("Team usage share", ([], [])), results.get("Recent trend", ([], []))
+    label = factor_queries.scoring_of(usage[0]).label
+    get = lambda values, n: values.get(factor_queries._row_name(n, values))
+    out = []
+    a, b = names
+    ppg = factor_queries._per_game_by_player(usage) if usage[1] else {}
+    late = factor_queries.h2h_values("Recent trend", *trend) if trend[1] else {}
+    leaders = []
+    for values, what in ((ppg, f"{label} points per game"), (late, f"{label} points per game in the later weeks")):
+        va, vb = get(values, a), get(values, b)
+        if va is None or vb is None:
+            continue
+        lead = a if va - vb >= factor_queries.PPG_MARGIN else b if vb - va >= factor_queries.PPG_MARGIN else None
+        leaders.append(lead)
+        out.append(f"{what[:1].upper() + what[1:]}: {a} {factor_queries._fmt(va)} vs {b} {factor_queries._fmt(vb)}: "
+                   + (f"{lead} leads." if lead else "level."))
+    if len(leaders) == 2 and leaders[0] and leaders[0] == leaders[1]:
+        out.append(f"{leaders[0]} leads on both, so start {leaders[0]}.")
+    elif out:
+        out.append("If one player leads on both, start him; otherwise start the points-per-game leader, or say "
+                   "why the later weeks or the matchup decide it.")
+    return out
 
 
 def _rows_of(queries: list[QueryRecord], factor: str) -> tuple[list[str], list[list[Any]]]:
@@ -630,17 +722,11 @@ def _rows_of(queries: list[QueryRecord], factor: str) -> tuple[list[str], list[l
     return (q.headers, q.rows) if q else ([], [])
 
 
-def _model_verdict(
-    run_id: str, facts: list[str], deadline: float, revision: tuple[str, list[str]] | None = None
-) -> dict[str, Any]:
+def _model_verdict(run_id: str, facts: list[str], deadline: float, revision: list[str] | None = None) -> dict[str, Any]:
     content = "\n".join(facts)
     if revision:
-        previous, issues = revision
-        content += (
-            f"\n\nYour previous answer:\n{previous}\n"
-            "A critic checked it against the data and found these problems. Fix every one "
-            "and keep what was right:\n" + "\n".join(f"- {issue}" for issue in issues)
-        )
+        content += "\n\nRules from a check against the data (follow every one):\n" + "\n".join(
+            f"- {rule}" for rule in revision)
     messages = [
         {"role": "system", "content": VERDICT_PROMPT},
         {"role": "user", "content": content},
@@ -698,19 +784,26 @@ def _check_answer(reply: dict[str, Any]) -> None:
 def _ask_json(
     run_id: str, step: str, messages: list[dict[str, Any]], max_tokens: int, check,
     agent_name: str = AGENT_NAME, timeout: float | None = None, deadline: float | None = None,
+    fresh_repair: bool = False,
 ) -> dict[str, Any]:
     """One model call that must return a JSON object passing check(); one repair retry.
 
     Each attempt gets at most `timeout` seconds and must end by `deadline`
-    (a time.perf_counter() value); a repair is only tried with MIN_RETRY_SECONDS left.
-    (Within an attempt, the adapter also retries once on a 5xx or an empty reply.)
+    (a time.perf_counter() value); a repair is only tried with MIN_RETRY_SECONDS left
+    (or `timeout`, if shorter). (Within an attempt, the adapter also retries once on a
+    5xx or an empty reply.) The repair normally shows the model its invalid reply;
+    fresh_repair sends the original messages again with a short "JSON only" reminder
+    instead, because a model shown its own reply can repeat it word for word (the
+    critic's review in runs 4e765f424e23 and e7adc890c23c).
     """
+    original = list(messages)
     messages = list(messages)
+    retry_seconds = MIN_RETRY_SECONDS if timeout is None else min(MIN_RETRY_SECONDS, timeout)
     for repairs in range(MAX_REPAIRS + 1):
         limit = timeout
         if deadline is not None:
             left = deadline - time.perf_counter()
-            if left <= 0 or (repairs and left < MIN_RETRY_SECONDS):
+            if left <= 0 or (repairs and left < retry_seconds):
                 trace(run_id, agent_name, "model_call", "skipped", retry_count=repairs, step=step,
                       reason=f"only {max(left, 0):.0f}s left in the time budget")
                 raise AnalystError(f"Model call ({step}) skipped: the time budget is used up.")
@@ -724,13 +817,18 @@ def _ask_json(
             return parsed
         except ValueError as error:
             status = "retry" if repairs < MAX_REPAIRS else "error"
-            trace(run_id, agent_name, "parse_reply", status, retry_count=repairs + 1, step=step, error=str(error))
+            trace(run_id, agent_name, "parse_reply", status, retry_count=repairs + 1, step=step, error=str(error),
+                  reply_head=reply[:200])
             if status == "error":
                 raise AnalystError(f"Model reply ({step}) was not valid: {error}") from error
-            messages += [
-                {"role": "assistant", "content": reply},
-                {"role": "user", "content": f"That reply was invalid ({error}). Reply with only the JSON object as specified."},
-            ]
+            if fresh_repair:
+                last = original[-1]
+                messages = original[:-1] + [dict(last, content=last["content"] + "\n\nReply with only the JSON object.")]
+            else:
+                messages += [
+                    {"role": "assistant", "content": reply},
+                    {"role": "user", "content": f"That reply was invalid ({error}). Reply with only the JSON object as specified."},
+                ]
     raise AssertionError("unreachable")
 
 

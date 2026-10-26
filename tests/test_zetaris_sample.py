@@ -105,3 +105,27 @@ def test_transient_cluster_errors_are_retried_once(sample_dir, monkeypatch, mess
         with pytest.raises(ZetarisError):
             run_sql("SELECT 1 AS a")
     assert len(seen) == calls
+
+
+def test_live_requests_default_to_a_120s_timeout(monkeypatch):
+    monkeypatch.delenv("ZETARIS_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(zetaris, "_base_url", lambda: "https://cluster")
+    monkeypatch.setattr(zetaris, "_org_id", lambda: "org")
+    timeouts = []
+    monkeypatch.setattr(zetaris, "_get_token", lambda base_url, timeout: timeouts.append(timeout) or "token")
+
+    class Reply:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"headers": [], "data": []}'
+
+    monkeypatch.setattr(zetaris, "urlopen", lambda request, timeout: timeouts.append(timeout) or Reply())
+    zetaris._run_live("SELECT 1", 10)
+    assert timeouts == [120, 120]  # the 39.5s query (run defa38b95a6b) was two thirds of the old 60s

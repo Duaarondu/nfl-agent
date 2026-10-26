@@ -28,14 +28,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents import analyst, factor_queries
+from app.agents import analyst, directions, factor_queries
 from app.agents.analyst import AnalystError, AnalystResult
 from app.agents.factor_queries import name_key, same_player, sentences
 from app.trace import trace
 
 AGENT_NAME = "critic"
 REVIEW_MAX_TOKENS = 8192
-REVIEW_TIMEOUT = 90  # the run budget (pipeline.RUN_BUDGET) still caps it
+REVIEW_TIMEOUT = 60  # the run budget (pipeline.RUN_BUDGET) still caps it; 2-34s with thinking off
 MAX_MODEL_ISSUES = 3
 # Model-review issues may send the answer back only this many times (the reviewer can be
 # wrong, run ddb115ab07ae); the code checks block in every round.
@@ -48,7 +48,11 @@ Reply with only this JSON:
              "reason": "<what the facts show instead, with their numbers>"}]}
 Report only claims that the facts contradict or do not support, including claims about
 when a change started. Do not report style or wording, or problems listed as already
-found. Reply {"issues": []} if the answer holds up."""
+found. A premise check, when given, was already applied: the answer is right to use the
+team in the data, so do not object that the data is for a different team than the
+question named. Judge depth chart order only by the depth chart facts: the player listed
+right after an injured starter is the one next in line. Reply {"issues": []} if the
+answer holds up."""
 
 ACTIONS = ("hold off on", "pick up", "add", "start", "sit", "bench", "hold", "drop", "stash")
 # Actions that commit a lineup spot or a roster move; these must follow the usage numbers.
@@ -65,6 +69,7 @@ ARTIFACTS = (
     (re.compile(r"\b\d+\.0\s+(?:games?|targets?|touchdowns?|TDs?|carries|receptions|catches|plays|weeks?|snaps)\b", re.I),
      "a count written with a decimal"),
     (re.compile(r"\b(?:nan|NaN|null|n/a)\b|\bNone\b(?!\s+of)"), "a missing value leaked from the data"),
+    (re.compile(r"\.\.\.|\u2026"), "an ellipsis left in place of the text"),
     # "13.8 target share" or "target share of 13.8": a share needs its % sign.
     (re.compile(r"\b\d+(?:\.\d+)?(?!\s*(?:%|percent))\s+(?:(?:recent|average|team|weekly)\s+)?"
                 r"(?:target|snap|air yards|touchdown|TD)\s+share\b", re.I),
@@ -105,7 +110,7 @@ ANY_PPR = re.compile(r"(?<!non-)(?<!non )\bPPR\b", re.I)
 @dataclass
 class Issue:
     check: str  # verdict_support, numbers, artifacts, question_fit, timing, user_context, compare, no_data,
-    #             position_label or model_review
+    #             position_label, direction or model_review
     where: str  # "answer" or "factor:<name>"
     claim: str  # the words being questioned
     reason: str
@@ -164,6 +169,7 @@ def check_answer(result: AnalystResult) -> list[Issue]:
         *check_compare(result),
         *check_has_data(result),
         *check_position_labels(result),
+        *check_directions(result),
     ]
 
 
@@ -255,16 +261,28 @@ def allowed_numbers(result: AnalystResult) -> list[float]:
         if not q.error:
             texts += factor_queries.summarize(q.factor or "", q.headers, q.rows)
     texts += [f.rule or "" for f in result.factors]
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
+    texts += directions.all_directions(results, result.player.name if result.player else None).lines
     texts += [str(factor_queries.START_PPR), str(factor_queries.PICKUP_SHARE)]  # quoted by rule-based verdicts
     return sorted({float(m) for text in texts for m in NUMBER.findall(text)})
 
 
 def unknown_numbers(text: str, allowed: list[float]) -> list[tuple[str, str]]:
-    """(sentence, number) for each number in text that no allowed value matches to 1 decimal place."""
+    """(sentence, number) for each number in text that no allowed value matches to 1 decimal place.
+
+    The difference or sum of two allowed numbers cited in the same sentence is allowed
+    too: "a 3.4-point edge (20.6 vs 17.2)".
+    """
     out = []
+    known = lambda v: any(abs(v - a) < 0.051 for a in allowed)
     for sentence in sentences(text):
+        values = [float(v) for v in NUMBER.findall(sentence)]
+        cited = [v for v in values if known(v)]
+        derived = {round(x + y, 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
+        derived |= {round(abs(x - y), 1) for i, x in enumerate(cited) for y in cited[i + 1:]}
         for value in NUMBER.findall(sentence):
-            if not any(abs(float(value) - a) < 0.051 for a in allowed):
+            v = float(value)
+            if not known(v) and not any(abs(v - d) < 0.051 for d in derived):
                 out.append((sentence, value))
     return out
 
@@ -451,11 +469,19 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
         if not q.error:
             facts += [f"- {q.factor or 'Query'}: {line}" for line in factor_queries.summarize(q.factor or "", q.headers, q.rows)]
     ctx = result.user_context.prompt_block() if result.user_context else ""
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
+    subject = result.player.name if result.player else None
+    facts += [f"- Direction: {line}" for line in directions.all_directions(results, subject).lines]
+    premise = []
+    if result.premise_correction:
+        premise = [f"Premise check (already applied; the answer uses the team in the data, so this is not an "
+                   f"issue): {result.premise_correction} The question as answered: {result.asked}"]
     lines = [
         result.season_context,
         *([ctx] if ctx else []),
         f"Question: {result.asked or result.question}",
-        *( [f"Premise check: {result.premise_correction}"] if result.premise_correction else [] ),
+        *premise,
+        *_depth_facts(result, results),
         "Facts:", *facts,
         f"Answer to check:\n{result.answer}",
     ]
@@ -467,7 +493,7 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
     ]
     reply = analyst._ask_json(
         result.run_id, "review", messages, REVIEW_MAX_TOKENS, _check_review,
-        agent_name=AGENT_NAME, timeout=REVIEW_TIMEOUT, deadline=deadline,
+        agent_name=AGENT_NAME, timeout=REVIEW_TIMEOUT, deadline=deadline, fresh_repair=True,
     )
     issues = []
     answer = _squash(result.answer)
@@ -478,7 +504,23 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
     return issues
 
 
+def _depth_facts(result: AnalystResult, results) -> list[str]:
+    """ "Depth chart: Mike Evans is WR1; if he is out, Deebo Samuel (WR2) is next at WR." """
+    headers, rows = results.get("Depth chart", ([], []))
+    if not rows or not result.player:
+        return []
+    t = factor_queries._Rows(headers, rows)
+    names, ranks, pos = t.text("player_name"), t.text("pos_rank"), (t.text("pos_abb") or [""])[0]
+    at = next((i for i, n in enumerate(names) if same_player(n, result.player.name)), None)
+    if at is None or at + 1 >= len(names):
+        return []
+    return [f"Depth chart: {names[at]} is {pos}{ranks[at]}; if he is out, {names[at + 1]} ({pos}{ranks[at + 1]}) "
+            f"is next at {pos}. Saying {names[at + 1]} moves up to {pos}{ranks[at]} is correct."]
+
+
 def _check_review(reply: dict[str, Any]) -> None:
+    if "issues" not in reply and isinstance(reply.get("claim"), str) and isinstance(reply.get("reason"), str):
+        reply["issues"] = [{"claim": reply.pop("claim"), "reason": reply.pop("reason")}]  # one issue, unwrapped
     items = reply.get("issues")
     if not isinstance(items, list):
         raise ValueError("needs an 'issues' list")
@@ -488,6 +530,25 @@ def _check_review(reply: dict[str, Any]) -> None:
 
 
 # --- helpers ---
+
+
+# --- i) the answer's comparison words fit the numbers (directions.py) ---
+
+
+def check_directions(result: AnalystResult) -> list[Issue]:
+    results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
+    found = directions.all_directions(results, result.player.name if result.player else None)
+    return [Issue("direction", "answer", sentence, f"The answer is reversed here: {problem}.")
+            for sentence in sentences(result.answer)
+            for problem in directions.contradictions(sentence, found)]
+
+
+def as_rule(issue: Issue) -> str:
+    """A blocking issue as a rule for the verdict revision, without quoting the old answer
+    (analyst.revise_verdict): "Do not write '[strong]': it is a support label ..."."""
+    if issue.check == "artifacts":
+        return f"Do not write {issue.claim!r}: {issue.reason.split(' is ', 1)[-1]}"
+    return issue.reason
 
 
 # --- g) compare: start exactly one of the two, as the head-to-head numbers say ---
