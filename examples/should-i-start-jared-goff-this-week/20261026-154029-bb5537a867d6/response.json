@@ -1,0 +1,461 @@
+{
+  "run_id": "bb5537a867d6",
+  "question": "Should I start Jared Goff this week?",
+  "answer": "Start Jared Goff. Jared Goff faces a tough matchup against GB (rank 28 of 32 against QBs allowing 12.1 PPR), but he is the clear QB1 on the Lions' depth chart with no injury concerns. Over 5 games this season, Goff averages 23 PPR points per game with 12 passing and 1 rushing touchdown, providing moderate production despite the opponent's defensive ranking.\n\nInformational only, based on nflverse data; not betting advice.",
+  "disclaimer": "Informational only, based on nflverse data; not betting advice.",
+  "approved": true,
+  "answer_before_critic": "Start Jared Goff. Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games with 12 passing and 1 rushing touchdown. However, his week 7 matchup against GB is a significant liability, as GB allows 12.1 PPR points per game to QBs, ranking 28th of 32 (tough matchup). The tough matchup outweighs his scoring output, making him a risky start despite his role as the Lions' clear QB1.",
+  "premise_correction": null,
+  "question_type": "start_sit",
+  "player": {
+    "name": "Jared Goff",
+    "team": "DET",
+    "position": "QB"
+  },
+  "players": [],
+  "name_note": null,
+  "season_context": "Season context: current season 2026; the latest week with stats is week 6. \"This season\" means season 2026.",
+  "factors": [
+    {
+      "factor": "Depth chart",
+      "support": "strong",
+      "summary": "Jared Goff is the clear QB1 on the Lions' depth chart, with Joshua Dobbs as the only listed backup, indicating he is the primary starter.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": null,
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT DISTINCT d.pos_abb, d.pos_rank, d.player_name, r.status AS roster_status, i.report_status FROM NFLVERSE.depth_charts d LEFT JOIN (SELECT gsis_id, MAX(status) AS status FROM NFLVERSE.rosters WHERE season = 2026 AND week = (SELECT MAX(week) FROM NFLVERSE.rosters WHERE season = 2026) GROUP BY gsis_id) r ON r.gsis_id = d.gsis_id LEFT JOIN (SELECT gsis_id, MAX(report_status) AS report_status FROM NFLVERSE.injuries WHERE season = 2026 AND week = 7 GROUP BY gsis_id) i ON i.gsis_id = d.gsis_id WHERE d.team = 'DET' AND d.pos_abb = 'QB' AND d.dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = 'DET') ORDER BY d.pos_rank LIMIT 25",
+          "headers": [
+            "pos_abb",
+            "pos_rank",
+            "player_name",
+            "roster_status",
+            "report_status"
+          ],
+          "rows": [
+            [
+              "QB",
+              "1",
+              "Jared Goff",
+              "ACT",
+              null
+            ],
+            [
+              "QB",
+              "2",
+              "Joshua Dobbs",
+              "ACT",
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Next matchup",
+      "support": "strong",
+      "summary": "Jared Goff faces GB in week 7, who allow 12.1 PPR points per game to QBs, ranking 28th of 32 (tough matchup).",
+      "rated_by": "model",
+      "rule": null,
+      "favours": null,
+      "evidence": [
+        {
+          "query_id": 5,
+          "sql": "WITH players AS (SELECT '00-0033106' AS player_id, 'Jared Goff' AS player, 'DET' AS team, 'QB' AS position, 'ACT' AS roster_status), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT DISTINCT team, 7 AS week FROM players), allowed AS (SELECT opponent_team, position, week, SUM(fantasy_points_ppr) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_ppr_allowed AS opp_avg_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games, p.roster_status, i.report_status, i.report_primary_injury FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status, MAX(report_primary_injury) AS report_primary_injury FROM NFLVERSE.injuries WHERE season = 2026 GROUP BY gsis_id, week) i ON i.gsis_id = p.player_id AND i.week = t.week LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+          "headers": [
+            "player",
+            "team",
+            "position",
+            "game_week",
+            "opponent",
+            "played",
+            "opp_avg_ppr_allowed",
+            "allowed_rank",
+            "teams_ranked",
+            "opp_games",
+            "roster_status",
+            "report_status",
+            "report_primary_injury"
+          ],
+          "rows": [
+            [
+              "Jared Goff",
+              "DET",
+              "QB",
+              "7",
+              "GB",
+              "0",
+              "12.1",
+              "28",
+              "32",
+              "6",
+              "ACT",
+              null,
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "factor": "Points per game",
+      "support": "moderate",
+      "summary": "Goff averages 23 PPR points per game over 5 games with 12 passing and 1 rushing touchdown.",
+      "rated_by": "model",
+      "rule": null,
+      "favours": null,
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT player_display_name, position, COUNT(*) AS games, SUM(passing_yards) AS passing_yards, SUM(passing_tds) AS passing_tds, SUM(rushing_tds) AS rushing_tds, ROUND(AVG(fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats WHERE season = 2026 AND player_id = '00-0033106' GROUP BY player_display_name, position",
+          "headers": [
+            "player_display_name",
+            "position",
+            "games",
+            "passing_yards",
+            "passing_tds",
+            "rushing_tds",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Jared Goff",
+              "QB",
+              "5",
+              "1485",
+              "12",
+              "1",
+              "23.0"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "text": "Jared Goff: DET, QB, roster status ACT (week 7).",
+      "evidence": [
+        {
+          "query_id": 1,
+          "sql": "SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND REGEXP_REPLACE(LOWER(full_name), ' (jr|sr|ii|iii|iv)[.]?$', '') IN ('jared goff', 'should i', 'i start', 'start jared', 'goff this', 'this week', 'should i start', 'i start jared', 'start jared goff', 'jared goff this', 'goff this week') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name",
+          "headers": [
+            "gsis_id",
+            "full_name",
+            "team",
+            "position",
+            "status",
+            "week"
+          ],
+          "rows": [
+            [
+              "00-0033106",
+              "Jared Goff",
+              "DET",
+              "QB",
+              "ACT",
+              "7"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Jared Goff is the clear QB1 on the Lions' depth chart, with Joshua Dobbs as the only listed backup, indicating he is the primary starter.",
+      "evidence": [
+        {
+          "query_id": 4,
+          "sql": "SELECT DISTINCT d.pos_abb, d.pos_rank, d.player_name, r.status AS roster_status, i.report_status FROM NFLVERSE.depth_charts d LEFT JOIN (SELECT gsis_id, MAX(status) AS status FROM NFLVERSE.rosters WHERE season = 2026 AND week = (SELECT MAX(week) FROM NFLVERSE.rosters WHERE season = 2026) GROUP BY gsis_id) r ON r.gsis_id = d.gsis_id LEFT JOIN (SELECT gsis_id, MAX(report_status) AS report_status FROM NFLVERSE.injuries WHERE season = 2026 AND week = 7 GROUP BY gsis_id) i ON i.gsis_id = d.gsis_id WHERE d.team = 'DET' AND d.pos_abb = 'QB' AND d.dt = (SELECT MAX(dt) FROM NFLVERSE.depth_charts WHERE team = 'DET') ORDER BY d.pos_rank LIMIT 25",
+          "headers": [
+            "pos_abb",
+            "pos_rank",
+            "player_name",
+            "roster_status",
+            "report_status"
+          ],
+          "rows": [
+            [
+              "QB",
+              "1",
+              "Jared Goff",
+              "ACT",
+              null
+            ],
+            [
+              "QB",
+              "2",
+              "Joshua Dobbs",
+              "ACT",
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Jared Goff faces GB in week 7, who allow 12.1 PPR points per game to QBs, ranking 28th of 32 (tough matchup).",
+      "evidence": [
+        {
+          "query_id": 5,
+          "sql": "WITH players AS (SELECT '00-0033106' AS player_id, 'Jared Goff' AS player, 'DET' AS team, 'QB' AS position, 'ACT' AS roster_status), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT DISTINCT team, 7 AS week FROM players), allowed AS (SELECT opponent_team, position, week, SUM(fantasy_points_ppr) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_ppr_allowed AS opp_avg_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games, p.roster_status, i.report_status, i.report_primary_injury FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status, MAX(report_primary_injury) AS report_primary_injury FROM NFLVERSE.injuries WHERE season = 2026 GROUP BY gsis_id, week) i ON i.gsis_id = p.player_id AND i.week = t.week LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player",
+          "headers": [
+            "player",
+            "team",
+            "position",
+            "game_week",
+            "opponent",
+            "played",
+            "opp_avg_ppr_allowed",
+            "allowed_rank",
+            "teams_ranked",
+            "opp_games",
+            "roster_status",
+            "report_status",
+            "report_primary_injury"
+          ],
+          "rows": [
+            [
+              "Jared Goff",
+              "DET",
+              "QB",
+              "7",
+              "GB",
+              "0",
+              "12.1",
+              "28",
+              "32",
+              "6",
+              "ACT",
+              null,
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Goff averages 23 PPR points per game over 5 games with 12 passing and 1 rushing touchdown.",
+      "evidence": [
+        {
+          "query_id": 3,
+          "sql": "SELECT player_display_name, position, COUNT(*) AS games, SUM(passing_yards) AS passing_yards, SUM(passing_tds) AS passing_tds, SUM(rushing_tds) AS rushing_tds, ROUND(AVG(fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats WHERE season = 2026 AND player_id = '00-0033106' GROUP BY player_display_name, position",
+          "headers": [
+            "player_display_name",
+            "position",
+            "games",
+            "passing_yards",
+            "passing_tds",
+            "rushing_tds",
+            "ppr_per_game"
+          ],
+          "rows": [
+            [
+              "Jared Goff",
+              "QB",
+              "5",
+              "1485",
+              "12",
+              "1",
+              "23.0"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "not_measurable": [
+    "Route participation and alignment",
+    "Coverage faced and quality of the cornerbacks",
+    "Coaching intent and play-calling plans",
+    "Injury severity beyond the official report"
+  ],
+  "critic": {
+    "approved": true,
+    "rounds": [
+      {
+        "round": 1,
+        "status": "needs_revision",
+        "reviewed_by": "model",
+        "review_note": "",
+        "answer": "Start Jared Goff. Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games with 12 passing and 1 rushing touchdown. However, his week 7 matchup against GB is a significant liability, as GB allows 12.1 PPR points per game to QBs, ranking 28th of 32 (tough matchup). The tough matchup outweighs his scoring output, making him a risky start despite his role as the Lions' clear QB1.",
+        "issues": [
+          {
+            "check": "numbers",
+            "where": "answer",
+            "claim": "Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games with 12 passing and 1 rushing touchdown.",
+            "reason": "24.9 is not in the cited rows or the facts computed from them.",
+            "blocking": true
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games",
+            "reason": "The facts state Jared Goff has 23 PPR points per game over 5 games. The average of 24.9 fantasy points per game is not supported by the given facts.",
+            "blocking": true
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "status": "needs_revision",
+        "reviewed_by": "model",
+        "review_note": "",
+        "answer": "Hold Jared Goff. Jared Goff faces a tough matchup against GB in week 7, who allow only 12.1 PPR points per game to QBs (rank 28th of 32). Goff averages 23 PPR points per game over 5 games with 12 passing and 1 rushing touchdown, which is moderate production against a top-32 defense.",
+        "issues": [
+          {
+            "check": "question_fit",
+            "where": "answer",
+            "claim": "Hold Jared Goff.",
+            "reason": "A start/sit answer should open with one of: Start, Sit, Bench.",
+            "blocking": true
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games",
+            "reason": "The facts state Jared Goff has 23 PPR points per game over 5 games. The average of 24.9 fantasy points per game is not supported by the given facts.",
+            "blocking": false
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "GB is a tough matchup for Jared Goff because they allow 12.1 PPR points per game to QBs (rank 28th of 32)",
+            "reason": "The facts state that GB's rank 28 of 32 against QBs means they are a tough matchup (rank 1 allows the most points; 1-10 favorable, 11-22 neutral, 23-32 tough). The numerical threshold 12.1 PPR points per game does not map to this scale, and the claim that it makes the matchup \"tough\" contradicts the given scale logic.",
+            "blocking": false
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Jared Goff averages 23 PPR points per game over 5 games with 12 passing and 1 rushing touchdown, which is moderate production against a top-32 defense",
+            "reason": "The facts state that rank 28 of 32 against QBs (allowing 12.1 PPR) is a \"tough matchup\" per the provided scale (1-10 favorable, 11-22 neutral, 23-32 tough). A defense allowing 12.1 PPR to QBs should be classified as at least neutral, if not favorable, under that scale logic.",
+            "blocking": false
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "status": "approved",
+        "reviewed_by": "model",
+        "review_note": "",
+        "answer": "Start Jared Goff. Jared Goff faces a tough matchup against GB (rank 28 of 32 against QBs allowing 12.1 PPR), but he is the clear QB1 on the Lions' depth chart with no injury concerns. Over 5 games this season, Goff averages 23 PPR points per game with 12 passing and 1 rushing touchdown, providing moderate production despite the opponent's defensive ranking.",
+        "issues": [
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Jared Goff faces a tough matchup against GB (rank 28 of 32 against QBs allowing 12.1 PPR)",
+            "reason": "The facts state that GB's rank 28 of 32 against QBs (allowing 12.1 PPR) means they are a tough matchup (rank 1 allows the most points; 1-10 favorable, 11-22 neutral, 23-32 tough). However, rank 28 is at the bottom of the 23-32 range, and the numerical threshold 12.1 PPR points per game does not map cleanly to the provided scale logic where rank 28 would typically be considered at least neutral. The claim that it is a \"tough\" matchup contradicts the scale's intent when rank 28 sits near the worst possible ranking.",
+            "blocking": false
+          },
+          {
+            "check": "model_review",
+            "where": "answer",
+            "claim": "Jared Goff's 23.0 PPR points per game this season are driven by a strong opportunity factor, averaging 24.9 fantasy points per game over 5 games",
+            "reason": "The facts state Jared Goff has 23 PPR points per game over 5 games. The average of 24.9 fantasy points per game is not supported by the given facts.",
+            "blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "memory": null,
+  "steps": {
+    "planner": "model",
+    "memory_mining": null,
+    "factors": {
+      "Depth chart": "model",
+      "Next matchup": "model",
+      "Points per game": "model"
+    },
+    "first_verdict": "model",
+    "final_verdict": "model",
+    "critic_reviews": [
+      "model",
+      "model",
+      "model"
+    ]
+  },
+  "timings": {
+    "total_ms": 70844,
+    "memory_ms": 0,
+    "agent_busy_ms": {
+      "planner": 558,
+      "analyst": 14536,
+      "factor_agent": 1852,
+      "critic": 55109
+    },
+    "model_calls": [
+      {
+        "agent": "planner",
+        "step": "classify",
+        "status": "ok",
+        "duration_ms": 558,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Points per game",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 611,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Next matchup",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 619,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "factor_agent:Depth chart",
+        "step": "factor",
+        "status": "ok",
+        "duration_ms": 622,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "verdict",
+        "status": "ok",
+        "duration_ms": 1274,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 12795,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "revise",
+        "status": "ok",
+        "duration_ms": 780,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 27700,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "analyst",
+        "step": "revise",
+        "status": "ok",
+        "duration_ms": 1796,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      },
+      {
+        "agent": "critic",
+        "step": "review",
+        "status": "ok",
+        "duration_ms": 14614,
+        "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      }
+    ]
+  }
+}

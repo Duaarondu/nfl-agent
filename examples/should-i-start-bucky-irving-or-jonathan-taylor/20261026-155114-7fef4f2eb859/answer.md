@@ -1,0 +1,102 @@
+```
+Data: live Zetaris cluster (SAMPLE_MODE=false).
+Models: Meterless Nightshift (nvidia/nemotron-3.5-lightning-30b-a3b).
+Steps (model vs rule-based):
+  planner: model
+  factors by model: Weekly opportunity, Team usage share, Recent trend, Touchdown share, Next matchup
+  factors by rules: none
+  first verdict: model; final verdict: model
+  critic reviews: model, model
+Timings: total 23.7s; analyst 12.2s, critic 8.9s, factor_agent 3.6s, planner 1.7s (busy time; factor agents run in parallel)
+
+Question: Should I start bucky irving or Jonathan Taylor
+Run 7fef4f2eb859: 6 queries, 2 critic rounds, 23.7s
+Season context: current season 2026; the latest week with stats is week 6. "This season" means season 2026.
+
+Answer before the critic:
+Start Jonathan Taylor over Bucky Irving. Jonathan Taylor leads on the three main code rules: he averages 19.8 PPR points per game versus Bucky Irving's 14.3, he averaged 18.3 PPR points per game from week 4 on versus Irving's 14.8, and he holds a stronger weekly opportunity edge with 24.2 touches per game to Irving's 19.5. Taylor also faces a more favorable matchup in week 7 (CAR rank 5 vs MIN rank 32), though the code rule favors Irving's opponent; however, Taylor's advantages in touches, PPR output, and recent trend outweigh that factor.
+
+Critic rounds:
+  Round 1: needs_revision (review: model), 4 blocking of 4 issues
+    - [blocking] direction in answer: The answer is reversed here: it gives Jonathan Taylor the easier matchup, but Jonathan Taylor's opponent allows 14.3 to Bucky Irving's 25.7; more points allowed is easier.
+      claim: Taylor also faces a more favorable matchup in week 7 (CAR rank 5 vs MIN rank 32), though the code rule favors Irving's opponent; however, Taylor's advantages in touches, PPR output, and recent trend outweigh that factor.
+    - [blocking] direction in answer: The answer is reversed here: 'favorable' does not fit Jonathan Taylor's matchup: MIN is rank 32 of 32 in points allowed, a tough matchup (rank 1 allows the most).
+      claim: Taylor also faces a more favorable matchup in week 7 (CAR rank 5 vs MIN rank 32), though the code rule favors Irving's opponent; however, Taylor's advantages in touches, PPR output, and recent trend outweigh that factor.
+    - [blocking] model_review in answer: The facts show: Bucky Irving 14.8 PPR points per game from week 4 on (weeks 4-6: 6.1 + 31.5 + 6.9 = 44.5 / 3). Jonathan Taylor 18.3 PPR points per game from week 4 on (weeks 4-6: 22.7 + 11.2 + 21.1 = 55.0 / 3). The answer's claim that Irving's later-week average is 14.8 and Taylor's is 18.3 is correct; however, the answer presents Irving's average as 14.8 (which matches) but the issue is the comparison framing in the answer text versus the raw data.
+      claim: he averaged 18.3 PPR points per game from week 4 on versus Irving's 14.8
+    - [blocking] model_review in answer: The facts state: Bucky Irving's opponent CAR is rank 5 of 32 (25.7 PPR allowed, favorable matchup). Jonathan Taylor's opponent MIN is rank 32 of 32 (14.3 PPR allowed, tough matchup). The answer claims Taylor faces a more favorable matchup, which contradicts the facts: MIN rank 32 is the toughest matchup, while CAR rank 5 is favorable. The code rule also favors Bucky Irving's matchup (25.7 allowed vs 14.3 allowed), not Taylor's.
+      claim: Taylor also faces a more favorable matchup in week 7 (CAR rank 5 vs MIN rank 32), though the code rule favors Irving's opponent
+  Round 2: approved (review: model), 0 blocking of 2 issues
+    - [recorded] model_review in answer: The facts provide weekly PPR points: weeks 1-3 for Irving are 20.3, 13, 7.8 (average 13.7); weeks 4-6 are 6.1, 31.5, 6.9 (average 14.8). For Taylor, weeks 1-3 are 25.1, 29.2, 9.2 (average 21.2); weeks 4-6 are 22.7, 11.2, 21.1 (average 18.3). The claim that Irving averaged 14.8 from week 4 onward and Taylor 18.3 from week 4 onward reverses the actual averages from the data.
+      claim: he averaged 18.3 PPR points per game from week 4 onward compared to Irving's 14.8
+    - [recorded] model_review in answer: The direction facts state: 'Easier matchup: Bucky Irving (CAR allow 25.7, rank 5) over Jonathan Taylor (MIN allow 14.3, rank 32); more points allowed and a lower rank number mean an easier matchup.' And 'By the code rule (next opponent's PPR points allowed per game: Bucky Irving 25.7 vs Jonathan Taylor 14.3), this factor favours Bucky Irving.' The answer's claim that Irving has the more favorable matchup contradicts the code rule and direction facts provided, which assign the easier matchup to Irving.
+      claim: despite Bucky Irving facing the more favorable matchup against CAR (rank 5, 25.7 PPR allowed)
+
+Final answer (approved; model verdict):
+Start Jonathan Taylor over Bucky Irving. Jonathan Taylor leads on the primary factors: he averages 19.8 PPR points per game versus Bucky Irving's 14.3, and he averaged 18.3 PPR points per game from week 4 onward compared to Irving's 14.8. Taylor also holds a significant weekly opportunity edge with 24.2 touches per game to Irving's 19.5, and despite Bucky Irving facing the more favorable matchup against CAR (rank 5, 25.7 PPR allowed), Jonathan Taylor's superior touch volume and consistent PPR output make him the clear start.
+
+_Informational only, based on nflverse data; not betting advice._
+
+Factors (most to least supported):
+  1. Weekly opportunity [favours Jonathan Taylor, strong, model] (queries 2): Jonathan Taylor averages 24.2 touches per game versus Bucky Irving's 19.5, and 19.8 PPR points per game versus 14.3.
+  2. Team usage share [favours Jonathan Taylor, strong, model] (queries 3): Jonathan Taylor has a higher average target share (11.6% vs 11.5%) and higher PPR points per game (19.8 vs 14.3), with 23 targets compared to 21.
+  3. Recent trend [favours Jonathan Taylor, strong, model] (queries 4): Jonathan Taylor averaged 18.3 PPR points per game from week 4 on compared to Bucky Irving's 14.8, a difference of 3.5 points.
+  4. Touchdown share [favours Bucky Irving, strong, model] (queries 5): Bucky Irving scores 21% of his PPR points from touchdowns versus Jonathan Taylor's 35.4%, making Irving less touchdown-dependent and steadier.
+  5. Next matchup [favours Bucky Irving, strong, model] (queries 6): Bucky Irving faces CAR (rank 5, 25.7 PPR allowed) while Jonathan Taylor faces MIN (rank 32, 14.3 PPR allowed); by the code rule, this factor favours Irving.
+
+Not measurable with this data:
+  - Route participation and alignment
+  - Coverage faced and quality of the cornerbacks
+  - Coaching intent and play-calling plans
+  - Injury severity beyond the official report
+
+Claims:
+  1. Bucky Irving: TB, RB, roster status ACT (week 7). Jonathan Taylor: IND, RB, roster status ACT (week 7).  (queries 1)
+  2. Jonathan Taylor averages 24.2 touches per game versus Bucky Irving's 19.5, and 19.8 PPR points per game versus 14.3.  (queries 2)
+  3. Jonathan Taylor has a higher average target share (11.6% vs 11.5%) and higher PPR points per game (19.8 vs 14.3), with 23 targets compared to 21.  (queries 3)
+  4. Jonathan Taylor averaged 18.3 PPR points per game from week 4 on compared to Bucky Irving's 14.8, a difference of 3.5 points.  (queries 4)
+  5. Bucky Irving scores 21% of his PPR points from touchdowns versus Jonathan Taylor's 35.4%, making Irving less touchdown-dependent and steadier.  (queries 5)
+  6. Bucky Irving faces CAR (rank 5, 25.7 PPR allowed) while Jonathan Taylor faces MIN (rank 32, 14.3 PPR allowed); by the code rule, this factor favours Irving.  (queries 6)
+
+Queries:
+  [1] team, position and roster status
+      SELECT r.gsis_id, r.full_name, r.team, r.position, r.status, r.week FROM NFLVERSE.rosters r JOIN (SELECT gsis_id, MAX(week) AS week FROM NFLVERSE.rosters WHERE season = 2026 AND REGEXP_REPLACE(LOWER(full_name), ' (jr|sr|ii|iii|iv)[.]?$', '') IN ('bucky irving', 'should i', 'i start', 'start bucky', 'irving or', 'or jonathan', 'jonathan taylor', 'should i start', 'i start bucky', 'start bucky irving', 'bucky irving or', 'irving or jonathan', 'or jonathan taylor') GROUP BY gsis_id) latest ON r.gsis_id = latest.gsis_id AND r.week = latest.week WHERE r.season = 2026 AND r.position IN ('QB', 'RB', 'WR', 'TE') ORDER BY r.full_name
+      gsis_id | full_name | team | position | status | week
+      00-0039361 | Bucky Irving | TB | RB | ACT | 7
+      00-0036223 | Jonathan Taylor | IND | RB | ACT | 7
+  [2] Bucky Irving vs Jonathan Taylor: snap %, targets, target share and PPR points by week
+      SELECT ps.player_display_name AS player, ps.week, ps.opponent_team, ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, ROUND(ps.fantasy_points_ppr, 1) AS ppr_points FROM NFLVERSE.player_stats ps LEFT JOIN NFLVERSE.snap_counts sc ON sc.game_id = ps.game_id AND sc.player = ps.player_display_name AND sc.team = ps.team WHERE ps.season = 2026 AND ps.player_id IN ('00-0039361', '00-0036223') ORDER BY ps.player_display_name, ps.week
+      player | week | opponent_team | snap_pct | targets | target_share_pct | receptions | carries | ppr_points
+      Bucky Irving | 1 | CIN | 61.0 | 7 | 25.9 | 7 | 8 | 20.3
+      Bucky Irving | 2 | CLE | 78.0 | 4 | 12.1 | 4 | 17 | 13.0
+      Bucky Irving | 3 | MIN | 52.0 | 4 | 11.4 | 2 | 15 | 7.8
+      Bucky Irving | 4 | GB | 59.0 | 0 | 0.0 | 0 | 16 | 6.1
+      Bucky Irving | 5 | DAL | 54.0 | 3 | 12.0 | 2 | 21 | 31.5
+      Bucky Irving | 6 | PIT | 85.0 | 3 | 7.3 | 2 | 19 | 6.9
+      Jonathan Taylor | 1 | BAL | 89.0 | 4 | 13.8 | 3 | 19 | 25.1
+      Jonathan Taylor | 2 | KC | 94.0 | 4 | 13.3 | 4 | 24 | 29.2
+      Jonathan Taylor | 3 | HOU | 85.0 | 3 | 8.6 | 2 | 23 | 9.2
+      Jonathan Taylor | 4 | WAS | 71.0 | 4 | 13.8 | 1 | 20 | 22.7
+      Jonathan Taylor | 5 | PIT | 73.0 | 4 | 9.3 | 3 | 15 | 11.2
+      Jonathan Taylor | 6 | TEN | 78.0 | 4 | 10.5 | 2 | 21 | 21.1
+  [3] Bucky Irving vs Jonathan Taylor: share of their team's targets and air yards, and PPR points per game
+      SELECT ps.player_display_name AS player, ps.team, COUNT(*) AS games, SUM(ps.targets) AS targets, ROUND(100 * AVG(ps.target_share), 1) AS avg_target_share_pct, ROUND(100 * AVG(ps.air_yards_share), 1) AS avg_air_yards_share_pct, SUM(ps.carries) AS carries, ROUND(AVG(ps.fantasy_points_ppr), 1) AS ppr_per_game FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0039361', '00-0036223') GROUP BY ps.player_display_name, ps.team ORDER BY ps.player_display_name
+      player | team | games | targets | avg_target_share_pct | avg_air_yards_share_pct | carries | ppr_per_game
+      Bucky Irving | TB | 6 | 21 | 11.5 | -3.6 | 96 | 14.3
+      Jonathan Taylor | IND | 6 | 23 | 11.6 | -2.5 | 122 | 19.8
+  [4] Bucky Irving vs Jonathan Taylor: PPR points per game and target share in weeks 1-3 vs 4-6
+      SELECT ps.player_display_name AS player, 3 AS split_week, SUM(CASE WHEN ps.week <= 3 THEN 1 ELSE 0 END) AS early_games, SUM(CASE WHEN ps.week > 3 THEN 1 ELSE 0 END) AS late_games, ROUND(AVG(CASE WHEN ps.week <= 3 THEN ps.fantasy_points_ppr END), 1) AS early_ppr_per_game, ROUND(AVG(CASE WHEN ps.week > 3 THEN ps.fantasy_points_ppr END), 1) AS late_ppr_per_game, ROUND(100 * AVG(CASE WHEN ps.week <= 3 THEN ps.target_share END), 1) AS early_target_share_pct, ROUND(100 * AVG(CASE WHEN ps.week > 3 THEN ps.target_share END), 1) AS late_target_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0039361', '00-0036223') GROUP BY ps.player_display_name ORDER BY ps.player_display_name
+      player | split_week | early_games | late_games | early_ppr_per_game | late_ppr_per_game | early_target_share_pct | late_target_share_pct
+      Bucky Irving | 3 | 3 | 3 | 13.7 | 14.8 | 16.5 | 6.4
+      Jonathan Taylor | 3 | 3 | 3 | 21.2 | 18.3 | 11.9 | 11.2
+  [5] Bucky Irving vs Jonathan Taylor: touchdowns and the share of PPR points that came from them
+      SELECT ps.player_display_name AS player, SUM(ps.receiving_tds + ps.rushing_tds + ps.passing_tds) AS touchdowns, SUM(6 * (ps.receiving_tds + ps.rushing_tds) + 4 * ps.passing_tds) AS td_points, ROUND(SUM(ps.fantasy_points_ppr), 1) AS ppr_points, ROUND(100 * SUM(6 * (ps.receiving_tds + ps.rushing_tds) + 4 * ps.passing_tds) / NULLIF(SUM(ps.fantasy_points_ppr), 0), 1) AS td_share_pct FROM NFLVERSE.player_stats ps WHERE ps.season = 2026 AND ps.player_id IN ('00-0039361', '00-0036223') GROUP BY ps.player_display_name ORDER BY ps.player_display_name
+      player | touchdowns | td_points | ppr_points | td_share_pct
+      Bucky Irving | 3 | 18 | 85.6 | 21.0
+      Jonathan Taylor | 7 | 42 | 118.5 | 35.4
+  [6] Bucky Irving vs Jonathan Taylor: week 7 opponent and its average PPR points allowed per game to the position (rank 1 = most allowed)
+      WITH players AS (SELECT '00-0039361' AS player_id, 'Bucky Irving' AS player, 'TB' AS team, 'RB' AS position, 'ACT' AS roster_status UNION ALL SELECT '00-0036223' AS player_id, 'Jonathan Taylor' AS player, 'IND' AS team, 'RB' AS position, 'ACT' AS roster_status), games AS (SELECT home_team AS team, away_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026 UNION ALL SELECT away_team AS team, home_team AS opponent, week, home_score FROM NFLVERSE.schedules WHERE season = 2026), target AS (SELECT DISTINCT team, 7 AS week FROM players), allowed AS (SELECT opponent_team, position, week, SUM(fantasy_points_ppr) AS pts FROM NFLVERSE.player_stats WHERE season = 2026 GROUP BY opponent_team, position, week), avg_allowed AS (SELECT opponent_team, position, ROUND(AVG(pts), 1) AS avg_ppr_allowed, COUNT(*) AS opp_games FROM allowed GROUP BY opponent_team, position), ranked AS (SELECT opponent_team, position, avg_ppr_allowed, opp_games, RANK() OVER (PARTITION BY position ORDER BY avg_ppr_allowed DESC) AS allowed_rank, COUNT(*) OVER (PARTITION BY position) AS teams_ranked FROM avg_allowed) SELECT p.player, p.team, p.position, t.week AS game_week, g.opponent, CASE WHEN g.home_score IS NULL THEN 0 ELSE 1 END AS played, r.avg_ppr_allowed AS opp_avg_ppr_allowed, r.allowed_rank, r.teams_ranked, r.opp_games, p.roster_status, i.report_status, i.report_primary_injury FROM players p LEFT JOIN target t ON t.team = p.team LEFT JOIN (SELECT gsis_id, week, MAX(report_status) AS report_status, MAX(report_primary_injury) AS report_primary_injury FROM NFLVERSE.injuries WHERE season = 2026 GROUP BY gsis_id, week) i ON i.gsis_id = p.player_id AND i.week = t.week LEFT JOIN games g ON g.team = p.team AND g.week = t.week LEFT JOIN ranked r ON r.opponent_team = g.opponent AND r.position = p.position ORDER BY p.player
+      player | team | position | game_week | opponent | played | opp_avg_ppr_allowed | allowed_rank | teams_ranked | opp_games | roster_status | report_status | report_primary_injury
+      Bucky Irving | TB | RB | 7 | CAR | 0 | 25.7 | 5 | 32 | 5 | ACT |  | 
+      Jonathan Taylor | IND | RB | 7 | MIN | 0 | 14.3 | 32 | 32 | 5 | ACT |  | 
+```

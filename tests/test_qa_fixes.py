@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app import pipeline
 from app.adapters import meterless, zetaris
-from app.agents import factor_queries, memory
+from app.agents import directions, factor_queries, memory
 from app.engines.hmem import HMEM
 from app.agents.analyst import AnalystError
 
@@ -383,3 +383,33 @@ def test_rb_opportunity_counts_touches(no_model):
     favours, support, rule = factor_queries.compare_rating("Weekly opportunity", results)
     assert (favours, support) == ("Jonathan Taylor", "strong")
     assert rule.startswith("touches (targets + carries) per game: Jonathan Taylor 24.2 vs Bucky Irving 19.5")
+
+
+# --- live run 729276b497e3: "(CAR rank 5 vs MIN rank 32)" named both opponents ---
+
+IRVING_TAYLOR = {"Next matchup": (
+    ["player", "team", "position", "game_week", "opponent", "played", "opp_avg_ppr_allowed", "allowed_rank",
+     "teams_ranked", "opp_games", "roster_status", "report_status", "report_primary_injury"],
+    [["Bucky Irving", "TB", "RB", "7", "CAR", "0", "25.7", "5", "32", "5", "ACT", None, None],
+     ["Jonathan Taylor", "IND", "RB", "7", "MIN", "0", "14.3", "32", "32", "5", "ACT", None, None]])}
+
+
+def test_a_shared_subject_gets_the_matchup_claim():
+    d = directions.directions("Next matchup", IRVING_TAYLOR)
+    wrong = ("Taylor also holds a stronger weekly opportunity edge with 24.2 touches per game to Irving's 19.5, "
+             "and faces a more favorable matchup in week 7 (CAR rank 5 vs MIN rank 32).")
+    assert ("it gives Jonathan Taylor the easier matchup, but Jonathan Taylor's opponent allows 14.3 to "
+            "Bucky Irving's 25.7; more points allowed is easier") in directions.contradictions(wrong, d)
+    right = ("Irving has fewer touches than Taylor, and faces a more favorable matchup in week 7 "
+             "(CAR rank 5 vs MIN rank 32).")
+    assert directions.contradictions(right, d) == []
+
+
+def test_he_at_a_sentence_start_is_the_previous_sentences_player():
+    # Live run 3b58e676ab5c was approved with this: "He" is Taylor, not Irving.
+    d = directions.directions("Next matchup", IRVING_TAYLOR)
+    wrong = ("Jonathan Taylor leads on weekly opportunity. He also faces the easier matchup: Bucky Irving plays CAR "
+             "(rank 5, 25.7 PPR allowed) while Jonathan Taylor plays MIN (rank 32, 14.3 PPR allowed).")
+    assert any(p.startswith("it gives Jonathan Taylor the easier matchup") for p in directions.contradictions(wrong, d))
+    right = "Bucky Irving has more touchdowns. He also has the easier matchup: CAR rank 5."
+    assert directions.contradictions(right, d) == []

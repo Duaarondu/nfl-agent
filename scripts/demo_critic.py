@@ -1,8 +1,8 @@
 """DEMO: the live Critic loop on a SAVED Analyst answer: python scripts/demo_critic.py
 
 This does not run the Analyst. It loads the Oct 22 Bucs/Evans run, whose model
-verdict was "Start Deebo Samuel" (backed only by the depth chart while Kittle and
-McCaffrey have far higher target shares), and feeds that saved answer into the live
+verdict was "Start Deebo Samuel" (with copied support labels and backed only by the
+depth chart), and feeds that saved answer into the live
 critique -> revise loop (app.pipeline.review): the Critic's checks and model review,
 and the Analyst's verdict revisions, all call the live Meterless model.
 

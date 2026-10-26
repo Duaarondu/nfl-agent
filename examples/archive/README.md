@@ -44,3 +44,19 @@ names, review-timeout skip). Every run below was replaced for the reason given.
 | `i-have-jameson-williams-.../20261025-211041-d4aafb841110` | rerun 3 | Approved (Pickens); predates the final code. |
 | `who-should-i-start-trey-mcbride-.../20261025-211220-aa7c55b91bec` | rerun 3 | Approved with a wrong claim: a "target volume edge" for Bowers (McBride had 65 targets to 43). |
 | `critic-demo-.../20261025-211259-82453ba2c4ac` | rerun 3 | Approved with a wrong depth-chart claim about Kittle. |
+
+### Replaced on 26 October 2026 after the stand-in fix (`20261026-15*`)
+
+QA found that a replacement pick came from the whole team's target share, so a TE or an RB
+could replace a WR. A stand-in is now a player at the out player's position, ranked below him
+on the depth chart, who can play. These four runs recommended the wrong position and were
+rerun with fresh IDs.
+
+| Run | Answer | Reason |
+|---|---|---|
+| `who-becomes-the-bucs-.../20261025-222542-1b1452e42db5` | Pick up George Kittle (TE) | Kittle is a TE, not a WR below Evans. New: Deebo Samuel (`56933e43f91f`). |
+| `12-team-half-ppr-.../20261025-222610-ad669548f7c3` | Pick up Christian McCaffrey (RB) | McCaffrey is an RB. New: Deebo Samuel (`17279d592b6c`). |
+| `should-i-pick-up-a-49ers-.../20261025-222628-afedf66887d9` | Pick up McCaffrey (RB) | Same. New: Deebo Samuel (`9bb4fcf8f300`). |
+| `should-i-start-bucky-irving-.../20261026-154259-729276b497e3` | Start Taylor, approved | Approved saying Taylor "faces a more favorable matchup ... (CAR rank 5 vs MIN rank 32)"; MIN (Taylor's) is rank 32, tough. The direction check gave the claim to Irving because CAR came first; fixed and rerun. |
+| `should-i-start-bucky-irving-.../20261026-154806-3b58e676ab5c` | Start Taylor, approved | Round 1 caught the reversal, but round 2 was approved with "He also faces the easier matchup: Bucky Irving plays CAR"; "He" (Taylor, from the sentence before) was read as Irving. Fixed and rerun (`7fef4f2eb859`). |
+| `critic-demo-.../20261025-222901-19b0e0886ff8` | Revised "Start Deebo Samuel" to "pick up George Kittle" | The Critic pushed the answer to a TE. New: the revision keeps Samuel (`27d4fa9cc227`). |

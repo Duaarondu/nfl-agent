@@ -356,6 +356,7 @@ def contradictions(text: str, d: Directions, favours: str | None = None) -> list
         problems.append(f"it says this factor favours {favours}, but the numbers favour {d.favours}")
     if ELLIPSIS.search(text):
         problems.append("it is unfinished (an ellipsis)")
+    text = _resolve_he(text, set(d.matchups) | set(d.allowed))
     for sentence, clause in _clauses(text):
         # The compare rule's own tie-break ("more PPR points per game (19.8 vs 19.8); they are
         # within 0.5, so the later weeks decide") is not a direction claim (QA run).
@@ -365,7 +366,24 @@ def contradictions(text: str, d: Directions, favours: str | None = None) -> list
     return list(dict.fromkeys(problems))
 
 
+def _resolve_he(text: str, names) -> str:
+    """A sentence that opens with "He"/"His" is about the player who opened the one before
+    ("Jonathan Taylor leads ... He also faces the easier matchup: Bucky Irving plays CAR";
+    live run 3b58e676ab5c read "He" as Irving)."""
+    out, prev = [], None
+    for s in fq.sentences(text):
+        m = re.match(r"(He|His)\b", s)
+        if m and prev:
+            s = (prev if m.group(1) == "He" else f"{prev}'s") + s[m.end():]
+        first = _mentions(s, names)
+        prev = first[0][1] if first else prev
+        out.append(s)
+    return " ".join(out)
+
+
 PRONOUN = re.compile(r"\b(?:he|his|him)\b", re.I)
+# A clause that goes on with the sentence's subject: "and faces ...", "but also has ...".
+SHARED_SUBJECT = re.compile(r"(?:^|,)\s*(?:and|but)\s+(?:also\s+|still\s+)?[a-z]+s\b")
 
 
 def _subject(sentence: str, clause: str, at: int, names) -> str | None:
@@ -373,6 +391,10 @@ def _subject(sentence: str, clause: str, at: int, names) -> str | None:
     if "he"/"his" stands between, the sentence's first-named player."""
     before = [(p, n) for p, n in _mentions(clause, names) if p < at]
     last = before[-1][0] if before else -1
+    if SHARED_SUBJECT.search(clause[last + 1:at]):
+        # "Taylor also holds ..., and faces a more favorable matchup": the sentence's subject (live run 729276b497e3).
+        first = _mentions(sentence, names)
+        return first[0][1] if first else None
     if PRONOUN.search(clause[last + 1:at]):
         first = _mentions(sentence, names)
         return first[0][1] if first else None
@@ -509,7 +531,12 @@ def _opponent_mentions(text: str, d: Directions) -> list[tuple[int, str]]:
 
 def _opponent_after(clause: str, at: int, d: Directions) -> str | None:
     """The player whose opponent is named just after a matchup word: "easier matchup with Los Angeles"."""
-    near = [(p, n) for p, n in _opponent_mentions(clause, d) if at <= p <= at + 40]
+    names = set(d.matchups) | set(d.allowed)
+    # Not "easier matchup: Bucky Irving plays CAR": a player named first is the sentence's to resolve (live run 3b58e676ab5c).
+    near = [(p, n) for p, n in _opponent_mentions(clause, d) if at <= p <= at + 40
+            and not _mentions(clause[at:p], names)]
+    if len({n for _, n in near}) > 1:
+        return None  # "(CAR rank 5 vs MIN rank 32)" lists both: the subject decides (live run 729276b497e3)
     return near[0][1] if near else None
 
 
@@ -527,7 +554,7 @@ def _label_words(sentence: str, clause: str, d: Directions) -> list[str]:
             before = [(p, n) for p, n in sorted(_opponent_mentions(clause, d) + _mentions(clause, d.matchups))
                       if p < m.start()]
             last = before[-1][0] if before else -1
-            if PRONOUN.search(clause[last + 1:m.start()]):
+            if PRONOUN.search(clause[last + 1:m.start()]) or SHARED_SUBJECT.search(clause[last + 1:m.start()]):
                 first = _mentions(sentence, d.matchups)
                 who = first[0][1] if first else None
             else:
