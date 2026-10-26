@@ -38,6 +38,7 @@ from app.agents.factor_queries import EVEN, _avg, _fmt, _Rows, name_key, same_pl
 
 Results = dict[str, tuple[list[str], list[list]]]
 FLAT = 0.5  # a gap under this (points or percentage points) is level: neither higher nor lower
+RANK_FLAT = 3  # matchup ranks closer than this are level (players at different positions)
 
 # --- words ---
 
@@ -111,6 +112,7 @@ class Directions:
     trends: dict[str, float] = field(default_factory=dict)  # metric -> change (later minus earlier, or with minus without)
     trend_label: str = ""  # what the trends compare, for the reason
     allowed: dict[str, float] = field(default_factory=dict)  # player -> next opponent's points allowed (higher = easier)
+    by_rank: bool = False  # players at different positions: allowed holds minus the rank (higher = easier)
     matchups: dict[str, dict] = field(default_factory=dict)  # player -> {opp, rank, teams, label} (matchup_label)
 
 
@@ -283,7 +285,23 @@ def _head_to_head(factor: str, t: _Rows, results: Results, d: Directions) -> Dir
         rows = {n: i for n, i in zip(t.text("player"), range(len(t.rows)))}
         opp, rank, value = t.text("opponent"), t.col("allowed_rank"), t.col(allowed)
         d.allowed = {n: value[i] for n, i in rows.items() if opp[i] and value[i] is not None}
-        if len(d.allowed) == 2:
+        positions = {t.text("position")[i] for n, i in rows.items() if n in d.allowed}
+        if len(d.allowed) == 2 and len(positions) == 2 and all(rank[rows[n]] is not None for n in d.allowed):
+            # QA run: an RB's and a WR's points allowed were compared; across positions only ranks compare.
+            d.by_rank = True
+            d.allowed = {n: -rank[rows[n]] for n in d.allowed}
+            (x, vx), (y, vy) = sorted(d.allowed.items(), key=lambda kv: -kv[1])
+            ix, iy = rows[x], rows[y]
+            pos = t.text("position")
+            if vx - vy >= RANK_FLAT:
+                d.lines.append(
+                    f"Easier matchup by rank: {x} ({opp[ix]}, rank {_fmt(rank[ix])} against {pos[ix]}s) over {y} "
+                    f"({opp[iy]}, rank {_fmt(rank[iy])} against {pos[iy]}s); they play different positions, so "
+                    "ranks are compared, not points allowed (a lower rank number is easier).")
+            else:
+                d.lines.append(f"The matchups are level by rank: {opp[ix]} rank {_fmt(rank[ix])} against {pos[ix]}s and "
+                               f"{opp[iy]} rank {_fmt(rank[iy])} against {pos[iy]}s.")
+        elif len(d.allowed) == 2:
             (x, vx), (y, vy) = sorted(d.allowed.items(), key=lambda kv: -kv[1])
             ix, iy = rows[x], rows[y]
             if vx - vy >= FLAT:
@@ -446,9 +464,13 @@ def _matchup_words(sentence: str, clause: str, d: Directions) -> list[str]:
                 continue
             other = next(n for n in d.allowed if n != who)
             mine, theirs = d.allowed[who], d.allowed[other]
-            if abs(mine - theirs) < FLAT:
+            if abs(mine - theirs) < (RANK_FLAT if d.by_rank else FLAT):
                 continue
-            if easier and mine < theirs or not easier and mine > theirs:
+            if d.by_rank and (easier and mine < theirs or not easier and mine > theirs):
+                out.append(f"it gives {who} the {'easier' if easier else 'tougher'} matchup, but {who}'s opponent "
+                           f"ranks {_fmt(-mine)} against his position to {other}'s {_fmt(-theirs)}; "
+                           "a lower rank is easier")
+            elif easier and mine < theirs or not easier and mine > theirs:
                 out.append(f"it gives {who} the {'easier' if easier else 'tougher'} matchup, but {who}'s opponent "
                            f"allows {_fmt(mine)} to {other}'s {_fmt(theirs)}; more points allowed is easier")
     return out

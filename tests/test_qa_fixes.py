@@ -294,7 +294,8 @@ def test_start_sit_answers_the_player_asked_about(no_model):
 def test_most_supported_lists_only_the_picks_factors(no_model):
     _, answer = ask("Should I start bucky irving or Jonathan Taylor")
     assert answer.startswith("Start Jonathan Taylor over Bucky Irving. Most supported by the data for Jonathan Taylor: "
-                             "Recent trend (moderate): Jonathan Taylor: 21.2 PPR points per game")
+                             "Weekly opportunity (strong): Jonathan Taylor: 6 games, 23 targets (3.8 per game), "
+                             "122 carries (20.3 per game, 24.2 touches per game)")
     supported = answer.split("Not supported:")[0]
     assert "Bucky Irving:" not in supported
 
@@ -322,3 +323,63 @@ def test_parallel_hmem_saves_use_unique_temp_files(tmp_path):
         list(pool.map(lambda _: mem.store.persist(), range(32)))
     assert (tmp_path / "store" / "state.json").is_file()
     assert not list((tmp_path / "store").glob("*.tmp"))
+
+
+# --- batch 3: nicknames and a closest-name suggestion ---
+
+
+@pytest.mark.parametrize("text, expanded", [
+    ("Should I start CMC?", "Should I start Christian McCaffrey?"),
+    ("Puka Nacua or JSN?", "Puka Nacua or Jaxon Smith-Njigba?"),
+    ("start puka or bijan", "start Puka Nacua or Bijan Robinson"),
+    ("Lamar Jackson is out", "Lamar Jackson is out"),
+    ("Travis Kelce or Kelce", "Travis Kelce or Travis Kelce"),
+])
+def test_nicknames(text, expanded):
+    assert factor_queries.with_nicknames(text) == expanded
+
+
+def test_a_nickname_finds_the_player(no_model):
+    run, answer = ask("JSN or Puka?")
+    assert [p.name for p in run.result.players] == ["Jaxon Smith-Njigba", "Puka Nacua"]
+    assert answer.startswith("Start Jaxon Smith-Njigba over Puka Nacua.")
+
+
+def test_a_misspelled_name_gets_a_suggestion(no_model):
+    with pytest.raises(AnalystError, match="Did you mean Justin Jefferson[?] Name the player in full."):
+        pipeline.answer("Should I start Justin Jeffersen?", model_review=False)
+
+
+# --- batch 3: players at different positions compare matchup ranks ---
+
+
+def test_rb_vs_wr_matchup_compares_ranks(no_model):
+    run, _ = ask("Bijan Robinson or CeeDee Lamb?")
+    results = {q.factor: (q.headers, q.rows) for q in run.result.queries if q.factor}
+    favours, support, rule = factor_queries.compare_rating("Next matchup", results)
+    assert (favours, support) == ("CeeDee Lamb", "moderate")
+    assert rule.startswith("next opponent's rank against each player's position (1 = most points allowed, "
+                           "lower is easier): CeeDee Lamb 3 vs Bijan Robinson 10")
+
+
+# --- batch 3: RB carries ---
+
+
+def test_rb_waiver_rule_counts_carries(no_model):
+    _, answer = ask("Is Kaelon Black worth adding?")
+    assert answer.startswith("Hold off on Kaelon Black.")
+    assert "Rule: pick up at 15%+ recent target share or, for an RB, 10+ carries per game; his are 1.7% and 7.5." in answer
+
+
+def test_rb_keep_rule_counts_carries(no_model):
+    _, answer = ask("Should I drop Bucky Irving?")
+    assert answer.startswith("Keep Bucky Irving.")
+    assert "10+ carries per game or 12+ PPR per game; his are 9.7%, 16 and 14.3." in answer
+
+
+def test_rb_opportunity_counts_touches(no_model):
+    run, _ = ask("Bucky Irving or Jonathan Taylor?")
+    results = {q.factor: (q.headers, q.rows) for q in run.result.queries if q.factor}
+    favours, support, rule = factor_queries.compare_rating("Weekly opportunity", results)
+    assert (favours, support) == ("Jonathan Taylor", "strong")
+    assert rule.startswith("touches (targets + carries) per game: Jonathan Taylor 24.2 vs Bucky Irving 19.5")

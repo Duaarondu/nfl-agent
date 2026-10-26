@@ -64,8 +64,9 @@ def test_he_is_the_sentences_first_named_player():
             "Pickens's 16.9, and he faces a significantly easier matchup with Los Angeles allowing 8.3 PPR points "
             "to tight ends (rank 31) versus Philadelphia allowing 38.3 to wide receivers (rank 3).")
     problems = directions.contradictions(text, d)
-    assert ("it gives Brock Bowers the easier matchup, but Brock Bowers's opponent allows 8.3 to George Pickens's "
-            "38.3; more points allowed is easier") in problems
+    # A TE and a WR: the ranks are compared, not the points allowed (QA run).
+    assert ("it gives Brock Bowers the easier matchup, but Brock Bowers's opponent ranks 31 against his position to "
+            "George Pickens's 3; a lower rank is easier") in problems
     assert ("'easier' does not fit Brock Bowers's matchup: LA is rank 31 of 32 in points allowed, a tough matchup "
             "(rank 1 allows the most)") in problems
 

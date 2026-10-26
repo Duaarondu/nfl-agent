@@ -250,7 +250,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 510 tests
+pytest           # 521 tests
 ```
 
 The tests cover:
@@ -418,17 +418,24 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
   deployment.
 - **Questions that name no player** get "Name the player in full", except kicker and
   defense questions ("I cover QB, RB, WR and TE only").
-- **No fuzzy matching.** A misspelt name is not found; nicknames ("CMC", "JSN") are
-  not recognised.
+- **Limited name matching.** About 20 common nicknames and first names ("CMC", "JSN",
+  "Puka") are recognised from a fixed list. A misspelt name is not answered: the reply
+  suggests the closest roster name ("Did you mean Justin Jefferson?").
 - **Season 2026 only.** A question about another season is answered from 2026 data,
   without a warning.
 - **League memory keeps its top 15 records** per question.
 - **Trades, rest-of-season value, dynasty, FAAB bids, handcuffs and streaming are not
   supported.** The answer says so, then gives the named players' numbers for the week.
 - **Scoring variants.** TE premium, 6-point passing touchdowns and superflex are not
-  modelled; touchdown shares count 4 points per passing touchdown.
+  modelled; the answer says it uses standard scoring rules for them. Touchdown shares
+  count 4 points per passing touchdown.
 - **One start threshold.** The rule-based start/sit verdict starts a player at 12+
   points per game in every scoring (PPR, half-PPR and standard).
+- **Fixed waiver thresholds.** The rule-based pickup is 15%+ recent target share, or
+  10+ carries per game for an RB.
+- **Stand-ins come from the depth chart.** A replacement pick is a player at the same
+  position ranked below the out player; a player listed at another position on the
+  chart, or a free agent from another team, is not considered.
 
 ## Pre-existing work
 

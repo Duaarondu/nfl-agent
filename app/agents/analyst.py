@@ -323,8 +323,8 @@ def analyze(
     # Without league memory, the question's own scoring ("Bijan or Lamb half ppr") still counts.
     stated = None if memory else scoring_in(question)
     scoring = factor_queries.SCORINGS[memory.scoring if memory else stated or "ppr"]
-    plan = _run_plan(run_id, question, player_name, question_type, season, week, scoring, memory,
-                     player_names=route.player_names)
+    plan = _run_plan(run_id, factor_queries.with_nicknames(question), player_name, question_type, season, week,
+                     scoring, memory, player_names=route.player_names)
 
     if free_sql:
         return _sql_loop(run_id, question, context, plan)
@@ -335,9 +335,10 @@ def analyze(
             "" if topic == "kickers or defenses" else " Name the players to get their week-by-week numbers."))
     if plan.player is None:
         trace(run_id, AGENT_NAME, "answer", "error", reason="no player found")
+        suggestion = _closest_name(run_id, question, season) if season else None
         raise AnalystError(
             "Could not find the NFL player this question is about in this season's rosters. "
-            "Name the player in full."
+            + (f"Did you mean {suggestion}? " if suggestion else "") + "Name the player in full."
         )
 
     window = _factor_window(started + TOTAL_BUDGET - time.perf_counter())
@@ -424,6 +425,15 @@ def _player_line(plan: Plan) -> str:
         line += f" Named by last name: {plan.name_note()}"
     note = plan.premise_note()
     return f"{line} Premise check: {note} Answer for the team in the data." if note else line
+
+
+def _closest_name(run_id: str, question: str, season: int) -> str | None:
+    """A "did you mean" for a misspelled name (QA run: "Justin Jeffersen" got no suggestion)."""
+    record = QueryRecord(1, "skill-player names this season, for a suggestion", factor_queries.names_sql(season))
+    _run_query(run_id, record, action="name_suggestion")
+    if record.error:
+        return None
+    return factor_queries.closest_name(question, [str(r[0]) for r in record.rows])
 
 
 def _lookup_summary(queries: list[QueryRecord]) -> str:

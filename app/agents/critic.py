@@ -352,7 +352,8 @@ def allowed_numbers(result: AnalystResult) -> list[float]:
     texts += [f.rule or "" for f in result.factors]
     results = {q.factor: (q.headers, q.rows) for q in result.queries if not q.error and q.factor}
     texts += directions.all_directions(results, result.player.name if result.player else None).lines
-    texts += [str(factor_queries.START_PPR), str(factor_queries.PICKUP_SHARE)]  # quoted by rule-based verdicts
+    texts += [str(factor_queries.START_PPR), str(factor_queries.PICKUP_SHARE),
+              str(factor_queries.PICKUP_CARRIES)]  # quoted by rule-based verdicts
     return sorted({float(m) for text in texts for m in NUMBER.findall(text)})
 
 

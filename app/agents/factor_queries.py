@@ -9,6 +9,7 @@ plain standard SQL that runs on both Spark SQL (Zetaris) and DuckDB (sample mode
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -252,6 +253,47 @@ def is_why_question(question: str) -> bool:
 
 def _quote(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
+
+
+# Nicknames and first names fans use alone (QA run: "CMC", "JSN", "Puka" were "could not find").
+# Acronyms match in capitals only; a first name counts only when the last name does not follow.
+NICKNAMES = {
+    "CMC": "Christian McCaffrey", "JSN": "Jaxon Smith-Njigba", "ARSB": "Amon-Ra St. Brown",
+    "Sun God": "Amon-Ra St. Brown", "MHJ": "Marvin Harrison Jr.", "BTJ": "Brian Thomas Jr.",
+    "AJB": "A.J. Brown", "T-Mac": "Terry McLaurin", "Puka": "Puka Nacua", "Saquon": "Saquon Barkley",
+    "Bijan": "Bijan Robinson", "Lamar": "Lamar Jackson", "Ja'Marr": "Ja'Marr Chase", "Jahmyr": "Jahmyr Gibbs",
+    "Deebo": "Deebo Samuel", "JJ": "Justin Jefferson", "Kelce": "Travis Kelce",
+}
+
+
+def with_nicknames(question: str) -> str:
+    """The question with each nickname replaced by the player's full name."""
+    for alias, full in NICKNAMES.items():
+        rest = full[len(alias):].strip() if full.lower().startswith(alias.lower()) else ""
+        before = r"(?<!\w)(?<!Travis )" if alias == "Kelce" else r"(?<!\w)"
+        after = rf"(?!\w)(?!\s+{re.escape(rest)})" if rest else r"(?!\w)"
+        flags = 0 if alias.isupper() else re.I
+        question = re.sub(before + re.escape(alias) + after, full, question, flags=flags)
+    return question
+
+
+def names_sql(season: int) -> str:
+    """Every skill player's name this season, for a closest-name suggestion."""
+    positions = ", ".join(_quote(p) for p in SKILL_POSITIONS)
+    return (f"SELECT DISTINCT full_name FROM NFLVERSE.rosters WHERE season = {season} "
+            f"AND position IN ({positions})")
+
+
+def closest_name(question: str, names: list[str]) -> str | None:
+    """The roster name closest to a 2-3 word run in the question ("Justin Jeffersen")."""
+    by_key = {without_suffix(n).lower(): n for n in names}
+    best, score = None, 0.0
+    for candidate in name_candidates(question):
+        for match in difflib.get_close_matches(candidate, by_key, n=1, cutoff=0.8):
+            ratio = difflib.SequenceMatcher(None, candidate, match).ratio()
+            if ratio > score:
+                best, score = by_key[match], ratio
+    return best
 
 
 def name_candidates(question: str) -> list[str]:
@@ -916,8 +958,11 @@ def _status(t: _Rows) -> list[str]:
 def _opportunity(t: _Rows) -> list[str]:
     share, weeks = t.col("target_share_pct"), t.text("week")
     best = max(range(len(share)), key=lambda i: -1 if share[i] is None else share[i])
+    carries = _total(t.col("carries"))
+    runs = (f", {_fmt(carries)} carries ({_fmt(carries / len(t.rows))} per game)"
+            if carries and carries / len(t.rows) >= MIN_CARRIES else "")
     return [
-        f"{len(t.rows)} games, {_fmt(_total(t.col('targets')))} targets, average snap share "
+        f"{len(t.rows)} games, {_fmt(_total(t.col('targets')))} targets{runs}, average snap share "
         f"{_fmt(_avg(t.col('snap_pct')))}%, average target share {_fmt(_avg(share))}%, "
         f"{_fmt(_avg(t.col(t.points)))} {t.scoring.label} points per game.",
         f"Highest target share: week {weeks[best]} ({_fmt(share[best])}%).",
@@ -986,7 +1031,14 @@ def _matchups(t: _Rows) -> list[str]:
 def _team_usage(t: _Rows) -> list[str]:
     recent, names, pos = t.col("recent_target_share_pct"), t.text("player_display_name"), t.text("position")
     top = sorted(range(len(t.rows)), key=lambda i: -(recent[i] or 0))[:4]
-    return ["Highest recent target share: " + "; ".join(f"{names[i]} ({pos[i]}) {_fmt(recent[i])}%" for i in top) + "."]
+    lines = ["Highest recent target share: " + "; ".join(f"{names[i]} ({pos[i]}) {_fmt(recent[i])}%" for i in top) + "."]
+    carries, games = t.col("carries"), t.col("games")
+    rbs = [i for i in range(len(t.rows)) if pos[i] == "RB" and carries[i] and games[i]]
+    if rbs:
+        lines.append("RB carries: " + "; ".join(
+            f"{names[i]} {_fmt(carries[i])} in {_fmt(games[i])} games ({_fmt(round(carries[i] / games[i], 1))} per game)"
+            for i in sorted(rbs, key=lambda i: -carries[i])[:3]) + ".")
+    return lines
 
 
 def _without(t: _Rows) -> list[str]:
@@ -1022,10 +1074,14 @@ def _h2h_opportunity(t: _Rows) -> list[str]:
     lines = []
     for name, idx in _by_player(t).items():
         snap, share = t.col("snap_pct"), t.col("target_share_pct")
-        targets, pts = t.col("targets"), t.col(t.points)
+        targets, pts, carries = t.col("targets"), t.col(t.points), t.col("carries")
+        runs = _avg(carries[i] for i in idx)
+        rushing = (f", {_fmt(_total(carries[i] for i in idx))} carries ({_fmt(runs)} per game, "
+                   f"{_fmt(_avg((targets[i] or 0) + (carries[i] or 0) for i in idx))} touches per game)"
+                   if runs and runs >= MIN_CARRIES else "")
         lines.append(
             f"{name}: {len(idx)} games, {_fmt(_total(targets[i] for i in idx))} targets "
-            f"({_fmt(_avg(targets[i] for i in idx))} per game), average snap share {_fmt(_avg(snap[i] for i in idx))}%, "
+            f"({_fmt(_avg(targets[i] for i in idx))} per game){rushing}, average snap share {_fmt(_avg(snap[i] for i in idx))}%, "
             f"average target share {_fmt(_avg(share[i] for i in idx))}%, "
             f"{_fmt(_avg(pts[i] for i in idx))} {t.scoring.label} points per game."
         )
@@ -1245,7 +1301,13 @@ def rule_rating(
         support = _grade(share, 22, 15, 10)
         if support == "strong" and (snap or 0) < 70:
             support = "moderate"
-        return support, f"average target share {_fmt(share)}% (strong >= 22 with snap share >= 70%, moderate >= 15, weak >= 10)"
+        rule = f"average target share {_fmt(share)}% (strong >= 22 with snap share >= 70%, moderate >= 15, weak >= 10)"
+        carries = _avg(t.col("carries")) if "carries" in t.headers else None
+        by_carries = _grade(carries, 15, PICKUP_CARRIES, MIN_CARRIES)
+        if GRADES.index(by_carries) < GRADES.index(support):
+            support = by_carries
+            rule += f"; carries per game {_fmt(carries)} (strong >= 15, moderate >= {_fmt(PICKUP_CARRIES)}, weak >= {_fmt(MIN_CARRIES)})"
+        return support, rule
     if factor == "Teammate absences":
         gain = _split_gain(ppr, set(t.text("week")))
         return _grade(gain, 5, 2, 0.1), f"{label} per game in weeks with a teammate out minus other weeks: {_fmt(gain)} (strong >= 5, moderate >= 2, weak > 0)"
@@ -1301,12 +1363,23 @@ _H2H_RULES = {
 }
 
 
+def _runners(t: _Rows) -> bool:
+    """Any player in the rows averages MIN_CARRIES+ carries: opportunity counts touches."""
+    if "carries" not in t.headers:
+        return False
+    carries = t.col("carries")
+    return any((_avg(carries[i] for i in idx) or 0) >= MIN_CARRIES for idx in _by_player(t).values())
+
+
 def h2h_values(factor: str, headers: list[str], rows: list[list]) -> dict[str, float | None]:
     """The deciding value of a head-to-head factor per player (targets per game for Weekly opportunity)."""
     t = _Rows(headers, rows)
     column = _H2H_RULES[factor][0].format(key=t.scoring.key)
     by_player = _by_player(t)
     values = t.col(column)
+    if factor == "Weekly opportunity" and _runners(t):  # QA run: RBs were rated on targets alone
+        carries = t.col("carries")
+        return {name: _avg((values[i] or 0) + (carries[i] or 0) for i in idx) for name, idx in by_player.items()}
     if factor == "Weekly opportunity":
         return {name: _avg(values[i] for i in idx) for name, idx in by_player.items()}
     return {name: values[idx[0]] for name, idx in by_player.items()}
@@ -1318,6 +1391,16 @@ def compare_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]
     values = h2h_values(factor, headers, rows) if rows else {}
     known = {n: v for n, v in values.items() if v is not None}
     column, higher, strong, moderate, weak, what = _H2H_RULES[factor]
+    t = _Rows(headers, rows)
+    if factor == "Weekly opportunity" and rows and _runners(t):
+        strong, moderate, weak, what = 4, 2, 0.5, "touches (targets + carries) per game"
+    if factor == "Next matchup" and len(set(t.text("position"))) > 1:
+        # Different positions (QA run: RB vs WR points allowed): compare the ranks, lower is easier.
+        by_player = _by_player(t)
+        values = {n: t.col("allowed_rank")[idx[0]] for n, idx in by_player.items()}
+        known = {n: v for n, v in values.items() if v is not None and t.text("opponent")[by_player[n][0]]}
+        column, higher, strong, moderate, weak = "allowed_rank", False, 10, 5, 3
+        what = "next opponent's rank against each player's position (1 = most points allowed, lower is easier)"
     label = scoring_of(headers).label
     what = what.format(label=label)
     if len(known) < 2:
@@ -1335,6 +1418,17 @@ def compare_rating(factor: str, results: dict[str, tuple[list[str], list[list]]]
 
 START_PPR = 12.0  # points per game (in the league's scoring) at or above which a start/sit rule says start
 PICKUP_SHARE = 15.0  # recent target share (%) at or above which a waiver rule says pick up
+PICKUP_CARRIES = 10.0  # carries per game at or above which a waiver rule says pick up an RB (QA run)
+MIN_CARRIES = 6.0  # carries per game below which carries are not quoted or rated
+GRADES = ("strong", "moderate", "weak", "not supported")
+
+
+def _carries_per_game(player: Player, results: dict[str, tuple[list[str], list[list]]]) -> float | None:
+    """An RB's carries per game from the Team usage rows; None for other positions."""
+    if player.position != "RB":
+        return None
+    carries, games = _usage(player, results, "carries"), _usage(player, results, "games")
+    return round(carries / games, 1) if carries is not None and games else None
 PPG_MARGIN = 0.5  # points per game closer than this are level (compare_verdict, critic check (g))
 
 
@@ -1684,18 +1778,30 @@ def rule_verdict(
         s = _scoring(results)
         share = _usage(player, results, "recent_target_share_pct")
         ppr = _usage(player, results, f"{s.key}_per_game")
-        keep = (share is not None and share >= PICKUP_SHARE) or (ppr is not None and ppr >= START_PPR)
+        runs = _carries_per_game(player, results)
+        keep = (share is not None and share >= PICKUP_SHARE) or (ppr is not None and ppr >= START_PPR) or (
+            runs is not None and runs >= PICKUP_CARRIES)
         verdict = f"{'Keep' if keep else 'Drop'} {player.name}"
-        why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share or {_fmt(START_PPR)}+ {s.label} per game; "
-                f"his are {_fmt(share)}% and {_fmt(ppr)}.")
+        if runs is not None:
+            why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share, {_fmt(PICKUP_CARRIES)}+ carries per game "
+                    f"or {_fmt(START_PPR)}+ {s.label} per game; his are {_fmt(share)}%, {_fmt(runs)} and {_fmt(ppr)}.")
+        else:
+            why += (f" Rule: keep at {_fmt(PICKUP_SHARE)}%+ recent target share or {_fmt(START_PPR)}+ {s.label} per game; "
+                    f"his are {_fmt(share)}% and {_fmt(ppr)}.")
         why = _with_matchup(why, results)
     elif question_type == "waiver":
         share = _usage(player, results, "recent_target_share_pct")
         if any(same_player(player.name, x) for x in roster):
             verdict = f"Hold {player.name} (already on your roster)"
+        runs = _carries_per_game(player, results)
+        busy = (share is not None and share >= PICKUP_SHARE) or (runs is not None and runs >= PICKUP_CARRIES)
+        if not any(same_player(player.name, x) for x in roster):
+            verdict = f"{'Pick up' if busy else 'Hold off on'} {player.name}"
+        if runs is not None:
+            why += (f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share or, for an RB, "
+                    f"{_fmt(PICKUP_CARRIES)}+ carries per game; his are {_fmt(share)}% and {_fmt(runs)}.")
         else:
-            verdict = f"{'Pick up' if share is not None and share >= PICKUP_SHARE else 'Hold off on'} {player.name}"
-        why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; his is {_fmt(share)}%."
+            why += f" Rule: pick up at {_fmt(PICKUP_SHARE)}%+ recent target share; his is {_fmt(share)}%."
         why = _with_matchup(why, results)
     elif question_type == "why":
         verdict = f"Hold {player.name}"
