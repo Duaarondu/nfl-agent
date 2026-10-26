@@ -86,16 +86,38 @@ def test_review_gets_60s_and_revise_65s(real_sample, model):
     assert pipeline.RUN_BUDGET == 360
 
 
-def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, trace_dir):
+def test_a_hard_rule_broken_twice_gets_the_rule_based_verdict_in_round_3(real_sample, model, trace_dir):
     script(model, [SAMUEL])  # every revision repeats the flagged verdict
+    run = pipeline.answer(BUCS)
+
+    assert run.approved and [c.round for c in run.critiques] == [1, 2, 3]
+    assert len(calls(model, analyst.VERDICT_PROMPT)) == 2  # first answer + 1 revision; round 3 needs no model
+    assert len(calls(model, critic.REVIEW_PROMPT)) == 3  # the Critic checks the rule-based verdict too
+    assert run.result.verdict_by == "rule-based"
+    assert "pick up George Kittle" in run.result.answer
+    assert run.result.answer.endswith("(Rule-based verdict: the model recommended a player the usage numbers "
+                                      "do not back twice, so fixed thresholds were applied.)")
+    lines = read_trace(trace_dir)
+    assert [l["status"] for l in lines if l["action"] == "critique"] == ["needs_revision", "needs_revision", "approved"]
+    revises = [l for l in lines if l["action"] == "revise"]
+    assert [l["status"] for l in revises] == ["ok", "fallback"]
+    assert revises[1]["reason"] == "the model recommended a player the usage numbers do not back twice"
+    [final] = [l for l in lines if l["action"] == "final"]
+    assert (final["status"], final["rounds"], final["revisions"]) == ("approved", 3, 2)
+
+
+def test_loop_stops_after_three_rounds_with_a_critic_note(real_sample, model, trace_dir):
+    # A copied support label is not a hard rule, so the model keeps the revisions and the
+    # run can end unresolved, with the reason in the critic note.
+    labelled = json.dumps({"verdict": "Pick up George Kittle", "why": "Team usage [strong]: 24.9% recent target share."})
+    script(model, [labelled])
     run = pipeline.answer(BUCS)
 
     assert not run.approved
     assert [c.round for c in run.critiques] == [1, 2, 3]
     assert len(calls(model, analyst.VERDICT_PROMPT)) == 3  # first answer + 2 revisions
     assert len(calls(model, critic.REVIEW_PROMPT)) == 3
-    assert run.result.answer.startswith(f"{SAMUEL_LEAD} The depth chart ranks him second. Critic note: ")
-    assert "trails George Kittle (TE) 24.9%" in run.result.answer
+    assert run.result.answer.endswith("Critic note: '[strong]' is a support label copied from the prompt.")
     lines = read_trace(trace_dir)
     assert [l["status"] for l in lines if l["action"] == "critique"] == ["needs_revision"] * 3
     assert len([l for l in lines if l["action"] == "revise"]) == 2

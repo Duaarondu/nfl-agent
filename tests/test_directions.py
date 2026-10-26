@@ -87,7 +87,40 @@ def test_higher_for_the_lower_number_of_a_pair():
     assert directions.contradictions(bad, d) == ["'higher' does not fit 31.9 vs 34.1"]
     assert directions.contradictions("Bowers has more targets per game (10.8 vs 10.8).", d) == \
         ["'more targets' does not fit 10.8 vs 10.8"]
-    assert directions.contradictions("Bowers holds a slight edge in snap share at 82.2% versus McBride's 90.5%.", d)
+    # "edge" is vague: it does not say which number is which, so it is not checked
+    assert not directions.contradictions("Bowers holds a slight edge in snap share at 82.2% versus McBride's 90.5%.", d)
+
+
+def test_a_vague_word_is_not_checked_and_ends_an_earlier_words_reach():
+    # Run c6522e90539f was blocked in rounds 1 and 3 on "'edge' does not fit 17.5 vs 21.9", but a
+    # lower touchdown share is McBride's edge, and rank 15 is the easier matchup.
+    answer = ("Brock Bowers leads PPR points per game (20.6 vs 17.2) and points in later weeks (18.2 vs 14.7), "
+              "with a higher recent average that outweighs Trey McBride's touchdown share edge (17.5% vs 21.9%) "
+              "and easier defensive matchup (DEN rank 15 vs LA rank 31).")
+    assert not directions.contradictions(answer, directions.Directions())
+
+
+@pytest.mark.parametrize("text, problem", [
+    ("Bowers has the easier matchup (LA rank 31 vs DEN rank 15).",
+     "'easier' does not fit 31 vs 15: for defense rank, the lower number is the easier matchup"),
+    ("Williams has a more favorable matchup, with GB allowing 26 versus PHI's 31.8.",
+     "'more favorable' does not fit 26 vs 31.8: for points allowed, the higher number is the easier matchup"),
+    ("Bowers is steadier, with a touchdown share of 21.9% vs 17.5%.",
+     "'steadier' does not fit 21.9 vs 17.5: for touchdown share, the lower number is the steadier, "
+     "less touchdown-dependent side"),
+])
+def test_good_words_follow_the_metrics_polarity(text, problem):
+    assert directions.contradictions(text, directions.Directions()) == [problem]
+
+
+@pytest.mark.parametrize("text", [
+    "McBride has the easier matchup (DEN rank 15 vs LA rank 31).",
+    "Pickens has a more favorable matchup, with PHI allowing 31.8 versus GB's 26.",
+    "McBride is steadier, with a touchdown share of 17.5% vs 21.9%.",
+    "McBride has the higher-ranked matchup (rank 15 vs rank 31).",  # a size word on ranks: ambiguous
+])
+def test_good_words_that_fit_the_polarity_pass(text):
+    assert not directions.contradictions(text, directions.Directions())
 
 
 @pytest.mark.parametrize("text", [
@@ -132,6 +165,15 @@ def test_kittle_and_mccaffrey_do_not_rank_higher_than_evans():
     fine = ("Mike Evans has the highest target share at 27.1%, but George Kittle's 24.9% ranks second, ahead of "
             "McCaffrey and Samuel, indicating Kittle would become the primary target if Evans is out.")
     assert not directions.contradictions(fine, d)
+
+
+def test_a_ranking_word_compares_the_names_after_the_last_comma():
+    # Run 6b5c3a81c4f9 was blocked on "it puts Mike Evans below George Kittle": the subject of
+    # "behind" is Deebo Samuel, after the comma.
+    d = directions.directions("Team usage", {"Team usage": TEAM_USAGE})
+    text = ("If Mike Evans is out, Deebo Samuel is next on the depth chart and has a lower target share (11.1%) "
+            "behind George Kittle (24.9%).")
+    assert not directions.contradictions(text, d)
 
 
 def test_an_even_factor_or_an_ellipsis():

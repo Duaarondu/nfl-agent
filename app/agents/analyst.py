@@ -374,13 +374,17 @@ def _factor_window(left: float) -> float:
     return max(MIN_FACTOR_WINDOW, min(FACTOR_WINDOW, left - VERDICT_RESERVE))
 
 
-def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, round: int) -> None:
+def revise_verdict(
+    result: AnalystResult, issues: list[str], deadline: float, round: int, rule_based: str | None = None
+) -> None:
     """Rerun only the verdict step after critic round `round`; updates result.
 
     The prompt is the verdict's facts plus the critic's issues as rules to follow
     (critic.as_rule), without the previous answer: shown its previous answer and asked to
     fix it, Nemotron reasons for 6,000-8,000 tokens even with thinking off (2026-10-25).
-    The factor agents are not rerun. If the call fails, the rule-based verdict is used.
+    The factor agents are not rerun. If the call fails, the rule-based verdict is used;
+    with rule_based (the reason, e.g. "the model recommended a rostered player twice")
+    the model is not called at all.
     """
     if result.player is None:  # free-SQL answers have no planned facts to re-verdict from
         trace(result.run_id, AGENT_NAME, "revise", "skipped", target_agent="critic", round=round,
@@ -395,11 +399,11 @@ def revise_verdict(result: AnalystResult, issues: list[str], deadline: float, ro
     answer, by = _verdict(
         result.run_id, result.question_type, result.player, facts, result.queries, result.factors,
         deadline=deadline, revision=issues, memory=result.user_context, out=out, players=result.players,
-        name_note=result.name_note, round=round,
+        name_note=result.name_note, round=round, rule_based=rule_based,
     )
     result.answer, result.verdict_by = answer, by
     trace(result.run_id, AGENT_NAME, "revise", "ok" if by == "model" else "fallback", target_agent="critic",
-          round=round, verdict_by=by, issues=len(issues))
+          round=round, verdict_by=by, issues=len(issues), **({"reason": rule_based} if rule_based else {}))
 
 
 def _player_line(plan: Plan) -> str:
@@ -559,27 +563,34 @@ def _verdict(
     queries: list[QueryRecord], factors: list[Factor], deadline: float,
     revision: list[str] | None = None, memory: UserContext | None = None, out: bool = False,
     players: list[factor_queries.Player] | None = None, name_note: str | None = None, round: int | None = None,
+    rule_based: str | None = None,
 ) -> tuple[str, str]:
     """(answer, verdict_by): the model's verdict, or the code rules' if that call fails.
 
     revision is the critic's issues as rules when critic round `round` sent the answer back.
+    rule_based (a reason) skips the model: the code rules give the verdict.
     The rule-based stand-in skips players already on the user's roster (memory), and
     never names the player when the question says he is out (out).
     """
     note = ""
     results = {q.factor: (q.headers, q.rows) for q in queries if not q.error}
-    try:
-        reply = _model_verdict(run_id, facts, deadline, revision)
+    reply, failed = None, None
+    if not rule_based:
+        try:
+            reply = _model_verdict(run_id, facts, deadline, revision)
+        except AnalystError as error:
+            failed = str(error)
+    if reply is not None:
         verdict, why, by = reply["verdict"], reply["why"], "model"
-    except AnalystError as error:
+    else:
         ranked = [(f.factor, f.support, f.summary) for f in factors]
         roster = memory.roster_names if memory else ()
         verdict, why = factor_queries.rule_verdict(question_type, player, results, ranked, roster, out=out,
                                                    players=players)
-        note = "(Rule-based verdict: the verdict model call failed, so fixed thresholds were applied.)"
+        note = f"(Rule-based verdict: {rule_based or 'the verdict model call failed'}, so fixed thresholds were applied.)"
         by = "rule-based"
         trace(run_id, AGENT_NAME, "verdict", "fallback", rated_by=by, verdict=verdict,
-              step="revise" if revision else "verdict", reason=str(error)[:300],
+              step="revise" if revision else "verdict", reason=(rule_based or failed or "")[:300],
               **({"round": round} if revision else {}))
     lead = factor_queries.replacement_lead(player, results, verdict) if question_type == "replacement" else None
     return round_numbers(_with_name_note(_compose(question_type, verdict, why, note, lead), name_note)), by
@@ -675,6 +686,11 @@ def _hard_rules(
         rules.append(f"Never recommend picking up {', '.join(roster)}: already on the user's roster.")
     if question_type == "replacement":
         rules.append('The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.')
+    if player and (question_type == "replacement" or (out and question_type in ("start_sit", "waiver"))):
+        rules += _backed_pick(player, results, tuple(roster))
+    elif player and question_type != "compare":
+        rules.append(f'The verdict names its player ("Hold {player.name}", "Start {player.name}"), never a bare '
+                     '"Hold" or "Start".')
     if question_type == "compare" and len(players) >= 2:
         rules += _compare_leaders([p.name for p in players[:2]], results)
     positions = factor_queries.known_positions(list(results.values()))
@@ -689,6 +705,23 @@ def _hard_rules(
         rules.append("Positions (from the rosters): " + "; ".join(named[:12])
                      + ". Use a label like WR1 or TE1 only with the player's own position.")
     return rules
+
+
+def _backed_pick(
+    player: factor_queries.Player, results: dict[str, tuple[list[str], list[list]]], roster: tuple[str, ...]
+) -> list[str]:
+    """The stand-in the code rules pick (factor_queries._next_up), as critic check (a) tests it:
+    "The usage numbers back Christian McCaffrey (22.8%) among players not on the roster: recommend him."."""
+    name, reason = factor_queries._next_up(player, results, roster)
+    if not name:
+        return []
+    among = " among players not on the roster" if roster else ""
+    share = factor_queries._usage(name, results, "recent_target_share_pct")
+    if "in the games" in reason or share is None:
+        backs = f"The numbers back {name}{among}: {factor_queries._first_sentence(reason)}"
+    else:
+        backs = f"The usage numbers back {name} ({factor_queries._fmt(share)}%){among}"
+    return [f'{backs}: recommend him ("Pick up {name}"). The answer may still say who is next on the depth chart.']
 
 
 def _compare_leaders(names: list[str], results: dict[str, tuple[list[str], list[list]]]) -> list[str]:

@@ -159,12 +159,17 @@ def test_why_answer_with_the_explanation_first_passes():
     ("why", "His 6 touchdowns explain it. Verdict: Hold"),
     ("start_sit", "Start. He averages 19.8 PPR points per game."),
     ("waiver", "Pick up. His target share is 22.2%."),
+    # Run 9e9b7541276e: both revisions ended "Verdict: hold." and the run was unresolved.
+    ("why", "His 6 TDs account for 30.3% of PPR points, making Hold the recommended action. Verdict: hold."),
 ])
 def test_verdict_must_name_a_player(question_type, answer):
     result = with_answer(WATSON, answer)
     result.question_type = question_type
-    [issue] = issues(result, "question_fit")
-    assert issue.blocking and "names no player" in issue.reason
+    [issue] = [i for i in issues(result, "artifacts") if "names no player" in i.reason]
+    assert issue.blocking and issue.rule == "named"
+    action = critic._action(critic.verdict_sentence(answer))
+    assert issue.reason.endswith(f'("{action.capitalize()} Christian Watson").')
+    assert critic.as_rule(issue) == issue.reason  # the rule says what to write, not "Do not write 'hold.'"
 
 
 C2 = "Should I pick up a 49ers receiver if Evans misses time?"
@@ -540,6 +545,44 @@ def test_a_single_issue_object_is_read_as_one_issue(review):
     found = critic.critique(with_answer(WATSON, "His 22.2% target share explains it. Verdict: hold Christian Watson."),
                             1, FAR_OFF)
     assert found.reviewed_by == "model" and [i.check for i in found.blocking] == ["model_review"]
+
+
+@pytest.mark.parametrize("reason, blocks", [
+    # Reasons the reviewer gave in the 25 October runs, for claims it agreed with.
+    ("The facts confirm the numbers: snap share 82% in weeks 1-3 vs 78.7% in weeks 4-6. The decline in "
+     "opportunity and PPR points per game is correctly stated and well-supported.", False),  # 9e9b7541276e
+    ("The facts state the depth chart has Mike Evans as WR1 and Deebo Samuel as WR2. Saying Deebo Samuel "
+     "moves up to WR1 is correct based on depth chart order.", False),  # 3217c41a5e3f
+    ("Saying Deebo Samuel moves up to WR1 is correct based on depth chart order. The 11.1% target share "
+     "is not needed to validate the depth chart succession claim.", False),  # 6b5c3a81c4f9
+    # Real objections, even with "accurate" in them.
+    ("The claim is not well-supported because PPR points per game declined from 23.1 to 16.5. Touchdown "
+     "efficiency is accurate.", True),  # 9e9b7541276e
+    ("If Mike Evans is out, the next at WR is Deebo Samuel, not George Kittle.", True),
+])
+def test_a_review_issue_that_calls_the_claim_correct_is_a_note(review, reason, blocks):
+    answer = "His 22.2% target share explains it. Verdict: hold Christian Watson."
+    review.reply = json.dumps({"issues": [{"claim": "His 22.2% target share explains it", "reason": reason}]})
+    [issue] = critic.critique(with_answer(WATSON, answer), 1, FAR_OFF).issues
+    assert issue.check == "model_review" and issue.blocking is blocks
+
+
+def test_hard_rule_tags_and_the_fallback_reason():
+    result = with_answer(BUCS, "Start Deebo Samuel. The depth chart ranks him second.")
+    [issue] = issues(result, "verdict_support")
+    assert issue.rule == "pick"
+    roster = critic.Issue("user_context", "answer", "pick up George Kittle.",
+                          "George Kittle is already on the user's roster; recommend a player who is not.")
+    roster.rule = critic._hard_rule(roster)
+    label = critic.Issue("artifacts", "answer", "[strong]", "'[strong]' is a support label copied from the prompt.")
+    label.rule = critic._hard_rule(label)
+    assert (roster.rule, label.rule) == ("rostered", None)  # a copied label is not a hard rule
+    one = critic.Critique(1, "", [roster], "rule-based")
+    two = critic.Critique(2, "", [roster, label], "rule-based")
+    assert critic.fallback_reason([one, two]) == "the model recommended a player already on the user's roster twice"
+    assert critic.fallback_reason([critic.Critique(1, "", [label], "rule-based"), two]) == \
+        "the model recommended a player already on the user's roster after a revision"
+    assert critic.fallback_reason([one, critic.Critique(2, "", [label], "rule-based")]) is None
 
 
 def test_issues_become_rules_without_the_old_answer():

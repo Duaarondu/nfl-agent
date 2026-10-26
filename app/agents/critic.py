@@ -115,6 +115,7 @@ class Issue:
     claim: str  # the words being questioned
     reason: str
     blocking: bool = True
+    rule: str | None = None  # the hard rule a blocking answer issue breaks (HARD_RULES), set by check_answer
 
 
 @dataclass
@@ -158,7 +159,51 @@ def critique(
     return found
 
 
+# The code-checked hard rules: if the last model revision still breaks one, the final
+# revision is the rule-based verdict (pipeline.review). tag -> what the model did.
+HARD_RULES = {
+    "rostered": "recommended a player already on the user's roster",
+    "out": "recommended the player who is out",
+    "pick": "recommended a player the usage numbers do not back",
+    "compare": "started the player the head-to-head numbers do not back",
+    "named": "gave a verdict that names no player",
+    "position": "gave a player another position's label",
+    "no_data": "picked a player with no data",
+}
+
+
+def _hard_rule(issue: Issue) -> str | None:
+    if not issue.blocking or issue.where != "answer":
+        return None
+    if issue.check == "user_context" and "already on the user's roster" in issue.reason:
+        return "rostered"
+    if issue.check == "question_fit" and "the player who is out" in issue.reason:
+        return "out"
+    if "names no player" in issue.reason:
+        return "named"
+    return {"verdict_support": "pick", "compare": "compare", "no_data": "no_data",
+            "position_label": "position"}.get(issue.check)
+
+
+def fallback_reason(critiques: list[Critique]) -> str | None:
+    """Why the last revision is rule-based: "the model recommended a player already on the
+    user's roster twice", or None when the latest critique breaks no hard rule."""
+    broken = list(dict.fromkeys(i.rule for i in critiques[-1].blocking if i.rule))
+    if not broken:
+        return None
+    before = {i.rule for c in critiques[:-1] for i in c.blocking if i.rule}
+    return "the model " + " and ".join(
+        HARD_RULES[r] + (" twice" if r in before else " after a revision") for r in broken)
+
+
 def check_answer(result: AnalystResult) -> list[Issue]:
+    issues = _check_answer(result)
+    for issue in issues:
+        issue.rule = _hard_rule(issue)
+    return issues
+
+
+def _check_answer(result: AnalystResult) -> list[Issue]:
     return [
         *check_verdict_support(result),
         *check_numbers(result),
@@ -321,8 +366,9 @@ def check_question_fit(result: AnalystResult) -> list[Issue]:
     if verdict is not None and qt != "replacement":  # replacement has its own stand-in check below
         action = _action(verdict)
         if action and not recommended_name(verdict):
-            return [Issue("question_fit", "answer", verdict,
-                          f"The verdict '{verdict.rstrip('.')}' names no player; say who to {action}.")]
+            example = f" (\"{action.capitalize()} {subject}\")" if subject and qt != "compare" else ""
+            return [Issue("artifacts", "answer", verdict,
+                          f"The verdict '{verdict.rstrip('.')}' names no player; say who to {action}{example}.")]
     if qt == "why":
         if _action(first):
             return [Issue("question_fit", "answer", first,
@@ -500,8 +546,23 @@ def _model_review(result: AnalystResult, found: list[Issue], deadline: float) ->
     for item in reply["issues"][:MAX_MODEL_ISSUES]:
         claim, reason = item["claim"].strip(), analyst.round_numbers(item["reason"].strip())
         # Only a claim quoted from the answer can block: an unquotable one may be the reviewer's own slip.
-        issues.append(Issue("model_review", "answer", claim, reason, blocking=bool(claim) and _squash(claim) in answer))
+        # A reason that calls the claim correct is a note, not an objection.
+        blocking = bool(claim) and _squash(claim) in answer and not agrees(reason)
+        issues.append(Issue("model_review", "answer", claim, reason, blocking=blocking))
     return issues
+
+
+# Runs 9e9b7541276e and 3217c41a5e3f were sent back on reasons like "The decline ... is
+# correctly stated and well-supported" and "Saying Deebo Samuel moves up to WR1 is correct".
+AGREES = re.compile(r"\b(?:correct(?:ly)?|accurate(?:ly)?|well[- ]supported|(?:is|are) supported|holds up)\b", re.I)
+OBJECTS = re.compile(r"\b(?:not|no|never|cannot|isn't|aren't|doesn't|don't|incorrect\w*|inaccurate\w*|unsupported"
+                     r"|contradict\w*|wrong|mislead\w*|overlook\w*|however|but)\b|n't\b", re.I)
+HARMLESS_NOT = re.compile(r"\bnot (?:needed|required|necessary)\b", re.I)
+
+
+def agrees(reason: str) -> bool:
+    """The reviewer says the claim is correct, accurate or well-supported, and objects to nothing."""
+    return bool(AGREES.search(reason)) and not OBJECTS.search(HARMLESS_NOT.sub("", reason))
 
 
 def _depth_facts(result: AnalystResult, results) -> list[str]:
@@ -546,7 +607,7 @@ def check_directions(result: AnalystResult) -> list[Issue]:
 def as_rule(issue: Issue) -> str:
     """A blocking issue as a rule for the verdict revision, without quoting the old answer
     (analyst.revise_verdict): "Do not write '[strong]': it is a support label ..."."""
-    if issue.check == "artifacts":
+    if issue.check == "artifacts" and issue.rule != "named":
         return f"Do not write {issue.claim!r}: {issue.reason.split(' is ', 1)[-1]}"
     return issue.reason
 

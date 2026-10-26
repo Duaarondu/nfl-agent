@@ -614,6 +614,30 @@ def test_first_verdict_gets_hard_rules_for_a_replacement(real_sample, model):
     assert "- Never recommend picking up Christian McCaffrey: already on the user's roster." in rules
     assert '- The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.' in rules
     assert "Mike Evans WR" in rules and "George Kittle TE" in rules and "Christian McCaffrey RB" in rules
+    assert ('- The usage numbers back George Kittle (24.9%) among players not on the roster: recommend him '
+            '("Pick up George Kittle").') in rules
+
+
+def test_replacement_hard_rule_names_the_codes_pick_off_the_roster(real_sample, model):
+    # Runs 6b5c3a81c4f9 and 76385bffb53c (Kittle on the roster) recommended Kittle, then Samuel,
+    # and ended unresolved: the prompt never named the pick the critic wanted.
+    from app.agents.memory import RosterPlayer, UserContext
+
+    script(model, classify("Mike Evans", "replacement"), answer=verdict("Pick up Christian McCaffrey", "22.8%."))
+    memory = UserContext(user_id="t", remembered=True,
+                         roster=[RosterPlayer("00-0033288", "George Kittle", "SF", "TE")])
+    analyze(BUCS, memory=memory)
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    assert ('- The usage numbers back Christian McCaffrey (22.8%) among players not on the roster: recommend '
+            'him ("Pick up Christian McCaffrey").') in call[1]["content"]
+
+
+def test_why_verdict_hard_rule_names_the_player(real_sample, model):
+    script(model, classify("Christian Watson", "why"))
+    analyze(WATSON_WHY)
+    [call] = calls_for(model, analyst.VERDICT_PROMPT)
+    assert ('- The verdict names its player ("Hold Christian Watson", "Start Christian Watson"), never a bare '
+            '"Hold" or "Start".') in call[1]["content"]
 
 
 def test_first_compare_verdict_gets_the_leaders(real_sample, model):

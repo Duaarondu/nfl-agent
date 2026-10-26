@@ -8,10 +8,16 @@ summary. The Critic runs the same text checks on the answer (check_directions).
 A summary contradicts the numbers when it:
 - says a head-to-head factor favours the player the code rule does not
 - uses "higher"/"more" for the lower number of a pair ("31.9% vs 34.1%"), or the reverse
+- calls the worse side of a pair "easier" or "steadier", by the metric's polarity (POLARITY)
 - says a value rose "from A to B" when B < A, or the reverse
 - says a share rose (or fell) when the code computed the opposite
 - says a player ranks above one with a higher share
 - gives the easier matchup to the player whose opponent allows fewer points
+
+Only unambiguous words are checked. A vague one ("edge", "advantage", "better",
+"leads") does not say which number is which, so it is never checked, and it ends the
+reach of an earlier word: in "a higher average that outweighs his touchdown share edge
+(17.5% vs 21.9%)" the "higher" is not read against 17.5 vs 21.9 (run c6522e90539f).
 """
 
 from __future__ import annotations
@@ -27,14 +33,30 @@ FLAT = 0.5  # a gap under this (points or percentage points) is level: neither h
 
 # --- words ---
 
-# A comparison word, or "more/less <word>" as one unit ("less favorable" is a lower word).
+# A comparison word for a pair of numbers. Size words compare the numbers themselves;
+# good/bad words ("easier", "steadier") compare them by the metric's polarity; vague words
+# are not checked. "more/less <word>" is one unit: "less touchdown-dependent" is a size
+# word, "more favorable" a good word, "more consistent" a vague one.
 COMPARE = re.compile(
-    r"\b(?P<moreless>more|less)\s+[\w-]+"
-    r"|\b(?P<higher>higher|greater|larger|bigger|better|edge|ahead|outpac\w*|leads?|leading|tops|easier|softer"
-    r"|friendlier|favou?rable)\b"
-    r"|\b(?P<lower>lower|fewer|smaller|trails?|trailing|behind|worse|tougher|harder|stingier)\b",
+    r"\b(?P<good>easier|softer|friendlier|more\s+favou?rable|favou?rable|steadier|more\s+stable)\b"
+    r"|\b(?P<bad>tougher|harder|stingier|less\s+favou?rable|riskier)\b"
+    r"|\b(?P<vague>edges?|advantages?|better|worse|ahead|outpac\w*|leads?|leading|tops|trails?|trailing|behind"
+    r"|stronger|weaker|(?:more|less)\s+(?:consistent|reliable|efficient|productive|valuable|explosive))\b"
+    r"|\b(?P<moreless>more|less)\s+[\w-]+"
+    r"|\b(?P<higher>higher|greater|larger|bigger)\b"
+    r"|\b(?P<lower>lower|fewer|smaller)\b",
     re.I,
 )
+# Which number of a pair is the good side, by the metric named with it:
+# (metric, pattern, the higher number is the good side?, what the good side is).
+# In the allowed_rank column rank 1 allows the most points, so a lower rank number is
+# the easier matchup.
+POLARITY = [
+    ("defense rank", re.compile(r"\brank", re.I), False, "easier matchup"),
+    ("points allowed", re.compile(r"\ballow", re.I), True, "easier matchup"),
+    ("touchdown share", re.compile(r"\btouchdown|\bTDs?\b", re.I), False, "steadier, less touchdown-dependent side"),
+]
+WORD_REACH = 60  # characters a comparison word reaches forward, not counting the pairs it already covers
 RISE = re.compile(r"\b(?:rose|risen|rises?|rising|grew|grown|grows?|growing|increas(?:e[sd]?|ing)|jump(?:s|ed|ing)?"
                   r"|climb(?:s|ed|ing)?|spik(?:es|ed|ing)|surg(?:es|ed|ing)|boost(?:s|ed|ing)?|improv(?:e[sd]?|ing))\b", re.I)
 FALL = re.compile(r"\b(?:fell|fallen|falls?|falling|drop(?:s|ped|ping)?|declin(?:e[sd]?|ing)|decreas(?:e[sd]?|ing)"
@@ -276,9 +298,16 @@ def _mentions(text: str, names) -> list[tuple[int, str]]:
 
 
 def _family(m: re.Match) -> str:
+    """higher or lower (size words), good or bad (by polarity), or vague."""
     if m.group("moreless"):
         return "higher" if m.group("moreless").lower() == "more" else "lower"
-    return "higher" if m.group("higher") else "lower"
+    return next(k for k in ("good", "bad", "vague", "higher", "lower") if m.group(k))
+
+
+def _polarity(text: str):
+    """The POLARITY entry for the metric named in text, the one nearest the end (the pair)."""
+    found = [(m.start(), p) for p in POLARITY for m in p[1].finditer(text)]
+    return max(found, key=lambda f: f[0])[1] if found else None
 
 
 def contradictions(text: str, d: Directions, favours: str | None = None) -> list[str]:
@@ -299,20 +328,38 @@ def _pairs(clause: str) -> list[str]:
     pairs = list(PAIR.finditer(clause))
     in_pair = lambda at: any(p.start("a") <= at < p.end() for p in pairs)
     for m in pairs:
-        if "rank" in clause[max(0, m.start() - 6):m.start()].lower():
-            continue  # a rank number: lower is better, so "higher" is ambiguous
         words = list(COMPARE.finditer(clause[:m.start("a")]))
         if not words:
             continue
-        word = words[-1]
+        word, family = words[-1], _family(words[-1])
+        if family == "vague":
+            continue  # "edge", "better": not checkable, and it ends an earlier word's reach
         # The word carries over "higher target share (21.9% vs 15.2%) and air yards share (31.9% vs 34.1%)",
-        # but not past a number of its own ("52 targets and 0 carries in 6 games compared to 29").
+        # but not past a number of its own ("52 targets and 0 carries in 6 games compared to 29"),
+        # and not far: "a higher average that outweighs ..." does not reach a later pair.
         between = [word.end() + n.start() for n in NUMBER.finditer(clause[word.end():m.start("a")])]
         if any(not in_pair(at) for at in between):
             continue
+        gap = len(clause[word.end():m.start("a")]) - sum(
+            p.end() - p.start("a") for p in pairs if word.end() <= p.start("a") and p.end() <= m.start("a"))
+        if gap > WORD_REACH:
+            continue
         a, b = float(m.group("a")), float(m.group("b"))
-        if _family(word) == "higher" and a <= b or _family(word) == "lower" and a >= b:
-            out.append(f"'{word.group(0)}' does not fit {m.group('a')} vs {m.group('b')}")
+        rank_pair = "rank" in clause[max(0, m.start() - 6):m.start()].lower()
+        if family in ("higher", "lower"):
+            if rank_pair:
+                continue  # "a higher rank": the number or the standing? ambiguous
+            if family == "higher" and a <= b or family == "lower" and a >= b:
+                out.append(f"'{word.group(0)}' does not fit {m.group('a')} vs {m.group('b')}")
+            continue
+        polarity = _polarity(clause[word.start():m.end()])
+        if polarity is None or a == b:
+            continue  # "easier" with no metric named: which number is easier is not known
+        metric, _, higher_is_good, meaning = polarity
+        a_is_good = a > b if higher_is_good else a < b
+        if (family == "good") != a_is_good:
+            out.append(f"'{word.group(0)}' does not fit {m.group('a')} vs {m.group('b')}: for {metric}, "
+                       f"the {'higher' if higher_is_good else 'lower'} number is the {meaning}")
     return out
 
 
@@ -378,7 +425,9 @@ def _ranking(sentence: str, clause: str, d: Directions) -> list[str]:
     outside = [n for at, n in _mentions(sentence, d.shares) if not start <= at < start + len(clause)]
     for pattern, ahead in ((AHEAD, True), (BEHIND, False)):
         for m in pattern.finditer(clause):
-            left = list(dict.fromkeys(n for at, n in in_clause if at < m.start()))
+            # "if Mike Evans is out, Deebo Samuel ... behind George Kittle": the subject follows the comma.
+            comma = clause.rfind(",", 0, m.start())
+            left = list(dict.fromkeys(n for at, n in in_clause if comma < at < m.start()))
             end = LIST_END.search(clause, m.end())
             stop = end.start() if end else len(clause)
             right = list(dict.fromkeys(n for at, n in in_clause if m.end() <= at < stop)) or \

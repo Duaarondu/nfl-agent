@@ -7,7 +7,10 @@ what the question says about the user's league and roster, then retrieves what i
 remembered, so the answer uses their scoring and is written for their roster.
 
 At most MAX_ROUNDS critiques, so at most MAX_ROUNDS - 1 revisions; only the verdict
-step is rerun, never the factor agents. The whole run fits in RUN_BUDGET seconds:
+step is rerun, never the factor agents. If the model's revision still breaks a
+code-checked hard rule (critic.HARD_RULES) before the last round, the last revision
+does not call the model: it is the rule-based verdict, labelled with the reason, and
+the Critic checks it like any other. The whole run fits in RUN_BUDGET seconds:
 the Analyst keeps its own budget and the critic loop gets whatever is left.
 If issues remain after the last round, the answer says so in a closing critic note.
 """
@@ -73,7 +76,9 @@ def review(result: AnalystResult, started: float | None = None, model_review: bo
         critiques.append(found)
         if not found.blocking or last:
             break
-        analyst.revise_verdict(result, [critic.as_rule(i) for i in found.blocking], deadline, round)
+        rule_based = critic.fallback_reason(critiques) if round >= 2 and round == MAX_ROUNDS - 1 else None
+        analyst.revise_verdict(result, [critic.as_rule(i) for i in found.blocking], deadline, round,
+                               rule_based=rule_based)
 
     approved = not critiques[-1].blocking
     if not approved:
