@@ -82,6 +82,8 @@ def corrected_type(question: str, question_type: str) -> str:
         return "unsupported"
     if factor_queries.guess_question_type(question) == "status":
         return "status"
+    if question_type == "status" and factor_queries.PLAY_VERDICT.search(question):
+        return "start_sit"  # "Is Gibbs a good play this week?" asks whether to start him
     if question_type == "other":
         guess = factor_queries.guess_question_type(question)
         return guess if guess in ("start_sit", "waiver") else question_type

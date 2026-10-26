@@ -129,3 +129,55 @@ def test_the_replacement_is_for_the_player_who_is_out(no_model, question):
 def test_two_players_out_neither_is_the_pickup(no_model, question):
     answer = ask(question).result.answer
     assert "so for fantasy: pick up Jacob Cowing if available" in answer
+
+
+# --- question reading ---
+
+
+@pytest.mark.parametrize("question", [
+    "Should I start Williams?",           # Kyren Williams (RB1); Savion Williams is a WR
+    "Should I start Johnson this week?",
+    "Aaron Jones is out. Who replaces him?",
+    "Gunnar Helm is out. Who replaces him?",  # David Martin-Robinson (TE3), not Wan'Dale Robinson
+])
+def test_a_shared_surname_is_not_a_wrong_position_label(no_model, question):
+    run = ask(question)
+    assert run.approved and "Critic note" not in run.result.answer
+
+
+@pytest.mark.parametrize("question", [
+    "Should I start Malik Washington?", "Should I pick up DeeJay Dallas?", "Should I start KC Concepcion?",
+    "Dallas Goedert is out, who replaces him?", "Darnell Washington or Dallas Goedert?",
+])
+def test_team_words_inside_a_name_are_not_a_premise(no_model, question):
+    # Before: "not WAS" and the agents answered "Should I start Malik Dolphins?".
+    run = ask(question)
+    assert run.result.premise_correction is None and run.result.asked == question
+
+
+def test_a_wrong_team_written_as_owner_is_corrected_even_if_it_is_the_opponent(no_model):
+    run = ask("Should I start the Packers' Jahmyr Gibbs this week?")  # Gibbs is DET; GB is his week 7 opponent
+    assert run.result.premise_correction == "Jahmyr Gibbs is on DET in the data (rosters, week 7), not GB."
+    assert ask("Should I start Jahmyr Gibbs against the Packers?").result.premise_correction is None
+
+
+@pytest.mark.parametrize("question", [
+    "Is Jahmyr Gibbs a good play this week?", "Is Jahmyr Gibbs a smash play?", "Is Jared Goff worth playing in week 7?",
+])
+def test_a_good_play_is_a_start_question(no_model, question):
+    assert ask(question).result.answer.startswith("Start ")
+
+
+@pytest.mark.parametrize("question, start", [
+    ("I have Jared Goff, Puka Nacua and Jahmyr Gibbs. Should I start Puka Nacua?", "Start Puka Nacua."),
+    ("I have Jared Goff, Puka Nacua and Jahmyr Gibbs. Should I start Jared Goff?", "Start Jared Goff."),
+    ("Jared Goff, Puka Nacua and Jahmyr Gibbs are on my team. Is Puka Nacua playing?", "Yes: Puka Nacua"),
+])
+def test_a_roster_list_is_not_a_choice(no_model, question, start):
+    # Before: "Start Jahmyr Gibbs over Jared Goff and Puka Nacua".
+    assert ask(question).result.answer.startswith(start)
+
+
+def test_bare_surnames_share_the_position_of_the_unique_one(no_model):
+    # The README's own example; before, "Williams" was Kyren Williams, an RB.
+    assert ask("Williams or Pickens?").result.answer.startswith("Start George Pickens over Jameson Williams.")

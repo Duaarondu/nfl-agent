@@ -173,6 +173,9 @@ def unsupported_message(topic: str) -> str:
 # "is X startable", "X @ DAL too tempting?", "is PHI a good matchup for X", "X worth a flex" (QA run).
 START_CUE = re.compile(r"\b(?:start|sit|bench|flex|startable|too tempting|good matchup|bad matchup|play him|should i play)\b"
                        r"|\s@\s*[A-Z]|\bworth a (?:flex|start)\b", re.I)
+# "Is Jahmyr Gibbs a good play this week?", "Is Goff worth playing?": a start/sit question, not
+# an injury one (QA, 26 October 2026: "Yes: ... has no game status on the injury report").
+PLAY_VERDICT = re.compile(r"\b(?:a|an)\s+(?:[\w-]+\s+){0,2}play\b|\bworth (?:playing|starting)\b", re.I)
 DROP_CUE = re.compile(r"\b(?:drop|cut|release)\b|\bshould i (?:hold|keep)\b", re.I)
 WAIVER_CUE = re.compile(r"\b(?:pick (?:him )?up|waivers?|add|adding|worth a pickup|must[- ]add|stash)\b", re.I)
 
@@ -182,7 +185,9 @@ def guess_question_type(question: str) -> str:
     text = question.lower()
     if unsupported_topic(question):
         return "unsupported"
-    if STATUS_CUE.search(question) and not START_CUE.search(question.replace("play", "")):
+    asks = (sentences(question) or [question])[-1]  # "Goff and Gibbs are on my team. Is Gibbs playing?"
+    if (STATUS_CUE.search(question) or STATUS_CUE.search(asks)) and not START_CUE.search(asks.replace("play", "")) \
+            and not PLAY_VERDICT.search(question):
         return "status"
     if is_why_question(text):
         return "why"
@@ -193,7 +198,7 @@ def guess_question_type(question: str) -> str:
         return "replacement"
     if WAIVER_CUE.search(text) or DROP_CUE.search(text):
         return "waiver"
-    if START_CUE.search(question):
+    if START_CUE.search(question) or PLAY_VERDICT.search(question):
         return "start_sit"
     return "other"
 
@@ -229,6 +234,12 @@ def listed_together(question: str, players: list["Player"]) -> bool:
 
 
 def is_choice(question: str, players: list["Player"]) -> bool:
+    """A choice between players. "I have Goff, Nacua and Gibbs. Should I start Nacua?" is not:
+    the last sentence asks about one player (QA, 26 October 2026: it became a 3-way compare)."""
+    parts = sentences(question)
+    if len(parts) > 1 and CHOICE_CUE.search(parts[-1]) is None and \
+            len([p for p in players if name_span(p, parts[-1])]) == 1:
+        return False
     return CHOICE_CUE.search(question) is not None or listed_together(question, players)
 
 
@@ -475,6 +486,14 @@ def resolve_last_names(
             seen.add(player.player_id)
             candidates.append((player, pts))
     positions = {p.position for p in others}
+    # "Williams or Pickens?": with no full name, a surname only one player has (Pickens, a WR)
+    # sets the position for the others (QA, 26 October 2026: Kyren Williams, an RB, was picked).
+    if not positions:
+        for word in words:
+            only = [p for p, _ in candidates if name_key(p.name).split()[-1:] == [word.lower()]]
+            if len(only) == 1:
+                positions.add(only[0].position)
+                others = [*others, only[0]]
     out = []
     for word in words:
         matches = [(p, pts) for p, pts in candidates if name_key(p.name).split()[-1:] == [word.lower()]]
@@ -535,12 +554,37 @@ def teams_mentioned(question: str) -> list[str]:
     return [code for _, code, _ in sorted(found)]
 
 
-def wrong_teams(question: str, player: Player) -> list[str]:
+def _name_spans(question: str, names: tuple[str, ...]) -> list[tuple[int, int]]:
+    """Where the question writes these players' names (full name, with or without a suffix,
+    else the last name alone)."""
+    spans = []
+    for name in names:
+        variants = {name, " ".join(w for w in name.split() if name_key(w)) , name_key(name).title()}
+        found = [m.span() for v in variants if v for m in re.finditer(rf"(?i)\b{re.escape(v)}\b", question)]
+        last = name_key(name).split()[-1:]
+        if not found and last:
+            found = [m.span() for m in re.finditer(rf"(?i)\b{re.escape(last[0])}\b", question)]
+        spans += found
+    return spans
+
+
+def mask_names(question: str, names: tuple[str, ...]) -> str:
+    """The question with the players' names blanked, so "Malik Washington" or "DeeJay Dallas"
+    is not read as a team (QA, 26 October 2026: "Should I start Malik Dolphins?")."""
+    chars = list(question)
+    for a, b in _name_spans(question, names):
+        chars[a:b] = "_" * (b - a)
+    return "".join(chars)
+
+
+def wrong_teams(question: str, player: Player, names: tuple[str, ...] = ()) -> list[str]:
     """Teams the question pins on the player that the data contradicts ([] if none).
 
     Mentions as an opponent ("vs the Bucs", "against Tampa") are not a premise, and
-    nothing is flagged when the question also names the player's actual team.
+    nothing is flagged when the question also names the player's actual team. Team words
+    inside the player's name, or any other name in names, do not count.
     """
+    question = mask_names(question, (player.name, *names))
     text = question.lower()
     owned = []
     for code in teams_mentioned(question):
@@ -558,14 +602,27 @@ def wrong_teams(question: str, player: Player) -> list[str]:
     return [] if player.team in owned else owned
 
 
-def corrected_question(question: str, wrong: list[str], team: str) -> str:
-    """The question with each wrong team's names replaced by the player's actual team."""
+def possessive_team(question: str, code: str) -> bool:
+    """The question writes the team as an owner: "the Packers' Jahmyr Gibbs", "Detroit's Goff"."""
+    return any(re.search(rf"(?i)\b{re.escape(name)}(?:'s|’s|'|’)\s", question) for name in TEAM_NAMES[code]) or \
+        re.search(rf"\b{code}(?:'s|’s|'|’)\s", question) is not None
+
+
+def corrected_question(question: str, wrong: list[str], team: str, names: tuple[str, ...] = ()) -> str:
+    """The question with each wrong team's names replaced by the player's actual team; the
+    players' own names are left alone."""
     nickname = TEAM_NAMES[team][0]
     nickname = nickname if nickname[0].isdigit() else nickname.title()
+    kept = {}
+    for i, (a, b) in enumerate(sorted(set(_name_spans(question, names)), reverse=True)):
+        kept[f"\x00{i}\x00"] = question[a:b]
+        question = f"{question[:a]}\x00{i}\x00{question[b:]}"
     for code in wrong:
         # Longest names first, so "tampa bay" is replaced before "tampa".
         for name in sorted(TEAM_NAMES[code], key=len, reverse=True):
             question = re.sub(rf"(?i)\b{re.escape(name)}\b", nickname, question)
+    for mark, text in kept.items():
+        question = question.replace(mark, text)
     return question
 
 
@@ -1230,10 +1287,21 @@ def position_label_problems(text: str, positions: dict[str, str]) -> list[tuple[
         if not labels:
             continue
         named = []
+        by_last: dict[str, list[str]] = {}
         for name in positions:
             last = name_key(name).split()[-1:]
-            for m in re.finditer(rf"\b{re.escape(last[0])}\b", sentence, re.I) if last else ():
-                named.append((m.start(), name))
+            if last:
+                by_last.setdefault(last[0], []).append(name)
+        # A surname shared by several players counts only where the full name is written
+        # (QA, 26 October 2026: "Kyren Williams (RB1)" was read as Savion Williams, a WR,
+        # and David Martin-Robinson's "TE3" as Wan'Dale Robinson's).
+        for last, names in by_last.items():
+            for m in re.finditer(rf"\b{re.escape(last)}\b", sentence, re.I):
+                written = name_key(sentence[:m.end()])
+                full = [n for n in names if written.endswith(name_key(n))]
+                who = full[0] if full else (names[0] if len(names) == 1 else None)
+                if who:
+                    named.append((m.start(), who))
         for label in labels:
             before = [n for n in named if n[0] < label.start()]
             after = [n for n in named if n[0] > label.start()]
@@ -1639,7 +1707,7 @@ def replacement_lead(
     elif pick and same_player(pick, depth[0]):
         lead += f" ({shown} {what})" if shown and "share" in what else f" ({shown})" if shown else ""
     elif pick and shown:
-        lead += f", but the {what} points to {pick} ({shown})"
+        lead += f", but the {what} {'point' if what == 'carries' else 'points'} to {pick} ({shown})"
     return f"{lead}, so for fantasy: {advice}."
 
 

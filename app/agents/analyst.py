@@ -283,7 +283,8 @@ class Plan:
     def corrected_question(self, question: str) -> str:
         if not (self.player and self.wrong_teams) or len(self.players) > 1:
             return question  # with two players the wrong team cannot be pinned on one of them
-        return factor_queries.corrected_question(question, self.wrong_teams, self.player.team)
+        return factor_queries.corrected_question(question, self.wrong_teams, self.player.team,
+                                                 tuple(p.name for p in (self.player, *self.players)))
 
     def premise_note(self) -> str | None:
         note = self._team_note()
@@ -1080,7 +1081,8 @@ def _run_plan(
             plan.players = pair
             plan.player = plan.players[0]
             # A team the question names that is no player's is a wrong premise.
-            wrong = [factor_queries.wrong_teams(question, p) for p in plan.players]
+            names = tuple(p.name for p in all_players)
+            wrong = [factor_queries.wrong_teams(question, p, names) for p in plan.players]
             plan.wrong_teams = [t for t in wrong[0] if all(t in w for w in wrong[1:])]
             for planned in factor_queries.compare_bundle(plan.players, season, week, scoring, week_named):
                 record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
@@ -1097,14 +1099,14 @@ def _run_plan(
     # "I have Josh Allen and Christian Watson. Should I start Christian Watson?" is about
     # Watson, rostered or not: the player the last sentence names (QA run answered Allen).
     asked = [p for p in factor_queries.order_in_question(players, question)
-             if question_type in ("start_sit", "waiver", "unsupported") and factor_queries.name_span(
+             if question_type in ("start_sit", "waiver", "unsupported", "status") and factor_queries.name_span(
                  p, factor_queries.sentences(question)[-1] if factor_queries.sentences(question) else question)]
     # "I dropped Deebo Samuel. Who becomes the 49ers' WR1 if Mike Evans is out?" is about Evans:
     # the player the question says is out, or the one after "replaces" (QA, 26 October 2026).
     gone = [p for p in factor_queries.order_in_question(players, question) if question_type == "replacement" and (
         factor_queries.says_out(question, p.name) or factor_queries.replaced_in(question, p))]
     plan.player = (gone or named or asked or not_owned or players)[0]
-    plan.wrong_teams = factor_queries.wrong_teams(question, plan.player)
+    plan.wrong_teams = factor_queries.wrong_teams(question, plan.player, tuple(p.name for p in all_players))
     planned_type = "start_sit" if question_type in ("unsupported", "status") else question_type
     for planned in factor_queries.plan(planned_type, plan.player, season, week, scoring, week_named):
         record = QueryRecord(len(plan.queries) + 1, planned.purpose, planned.sql, factor=planned.factor)
@@ -1132,7 +1134,8 @@ def _check_opponents_and_byes(
     results = {q.factor: (q.headers, q.rows) for q in plan.queries if not q.error and q.factor}
     t = factor_queries._Rows(*results.get("Next matchup", ([], [])))
     opponents = set(t.text("opponent"))
-    plan.wrong_teams = [w for w in plan.wrong_teams if w not in opponents]
+    # "the Packers' Jahmyr Gibbs" still pins GB on Gibbs when GB is his opponent (QA, 26 Oct 2026).
+    plan.wrong_teams = [w for w in plan.wrong_teams if w not in opponents or factor_queries.possessive_team(question, w)]
     claimed = _claimed_on_bye(question, players)
     if not claimed:
         return
