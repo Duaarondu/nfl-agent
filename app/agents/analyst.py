@@ -734,7 +734,7 @@ def _verdict_facts(
             lines += [f"    {line}" for line in factor_queries.summarize(f.factor, *_rows_of(queries, f.factor))]
         if f.factor in results:
             lines += [f"    {line}" for line in directions.directions(f.factor, results, player and player.name).lines]
-    rules = _hard_rules(question_type, player, players or [], results, memory, out, "\n".join(lines))
+    rules = _hard_rules(question_type, player, players or [], results, memory, out, "\n".join(lines), question)
     if rules:
         lines.append("Hard rules (computed in code; follow every one):")
         lines += [f"- {rule}" for rule in rules]
@@ -744,6 +744,7 @@ def _verdict_facts(
 def _hard_rules(
     question_type: str, player: factor_queries.Player | None, players: list[factor_queries.Player],
     results: dict[str, tuple[list[str], list[list]]], memory: UserContext | None, out: bool, facts: str,
+    question: str = "",
 ) -> list[str]:
     rules = []
     if player and (out or question_type == "replacement"):
@@ -753,7 +754,8 @@ def _hard_rules(
         rules.append(f"Never recommend picking up {', '.join(roster)}: already on the user's roster.")
     if question_type == "replacement":
         rules.append('The verdict is "Pick up <one player>": who to add for fantasy, not a start/sit choice.')
-    away = factor_queries.unavailable(results)
+    # Every compared player the question says is out, not only the first-named one (QA).
+    away = factor_queries.unavailable(results, question if question_type == "compare" else "")
     for name, why in away.items():
         if question_type == "compare" and len(players) >= 2:
             others = [p.name for p in players if not any(factor_queries.same_player(p.name, n) for n in away)]

@@ -701,6 +701,12 @@ def check_compare(result: AnalystResult) -> list[Issue]:
         return [Issue("compare", "answer", verdict or result.answer,
                       f"The verdict must start exactly one of {' and '.join(names)}: \"Start <one> over <the other>\".")]
     others = [n for n in names if n != pick]
+    # Whichever player he is named as: "Kittle or Evans if Evans is out?" started Evans (QA).
+    if factor_queries.says_out(result.question, pick):
+        able = [n for n in others if not factor_queries.says_out(result.question, n)]
+        instead = f"start {' or '.join(able)}" if able else "none of them can play"
+        return [Issue("question_fit", "answer", verdict,
+                      f"The verdict says to start {pick}, the player who is out; {instead}.")]
     if any(re.search(rf"\b(?:start|play)\s+(?:both|{re.escape(name_key(o).split()[-1])})\b", _plain(verdict), re.I)
            for o in others) or re.search(r"\bstart\s+both\b", _plain(result.answer), re.I):
         return [Issue("compare", "answer", verdict, f"The verdict starts both players; start only one, {pick} or {others[0]}.")]

@@ -1567,17 +1567,19 @@ def replacement_lead(player: Player, results: dict[str, tuple[list[str], list[li
     return f"{lead}, so for fantasy: {advice}."
 
 
-def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], list[list]]]) -> tuple[str, str]:
+def compare_verdict(
+    players: list[Player], results: dict[str, tuple[list[str], list[list]]], question: str = ""
+) -> tuple[str, str]:
     """(verdict, why): start the player with more points per game in the league's scoring;
     within 0.5 points, the one scoring more in the later weeks (Recent trend). With three or
-    more players, every one is ranked ("Start A over B and C"). A player on bye, Out or on
-    reserve cannot score; when none can play, the verdict says so."""
+    more players, every one is ranked ("Start A over B and C"). A player on bye, Out, on
+    reserve, or out as the question says cannot score; when none can play, the verdict says so."""
     usage = results.get("Team usage share", ([], []))
     label = _scoring(results).label
     ppg = _per_game_by_player(usage) if usage[1] else {}
     late = h2h_values("Recent trend", *results["Recent trend"]) if results.get("Recent trend", ([], []))[1] else {}
     names = [_row_name(p.name, ppg) for p in players]
-    away = unavailable(results)
+    away = unavailable(results, question)
     off = {n: next(r for x, r in away.items() if same_player(n, x)) for n in names
            if any(same_player(n, x) for x in away)}
     able = [n for n in names if n not in off]
@@ -1588,7 +1590,7 @@ def compare_verdict(players: list[Player], results: dict[str, tuple[list[str], l
         why_off = "; ".join(f"{n} {r}" for n, r in off.items())
         if len(able) == 1:
             return (f"Start {able[0]} over {' and '.join(off)}", f"Rule: {why_off}. Decided by availability.")
-        verdict, why = compare_verdict([p for p in players if _row_name(p.name, ppg) in able], results)
+        verdict, why = compare_verdict([p for p in players if _row_name(p.name, ppg) in able], results, question)
         return f"{verdict} and {' and '.join(off)}", f"Rule: {why_off}. {why}"
     if len(names) > 2:
         ranked = sorted(names, key=lambda n: -(ppg.get(n) if ppg.get(n) is not None else -1))
@@ -1627,9 +1629,14 @@ def matchup_label(rank: float | None, teams: float | None = 32) -> str | None:
 UNAVAILABLE_ROSTER = {"RES": "is on reserve (RES)", "CUT": "is not on a roster (CUT)", "SUS": "is suspended (SUS)"}
 
 
-def unavailable(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, str]:
+QUESTION_OUT = "is out, as the question says"
+
+
+def unavailable(results: dict[str, tuple[list[str], list[list]]], question: str = "") -> dict[str, str]:
     """{player: why he cannot play} in the matchup week: on bye, listed Out, or on reserve
-    (QA run: Monangai, Out in week 7, and Adams, RES, both got "Start")."""
+    (QA run: Monangai, Out in week 7, and Adams, RES, both got "Start"); with the question,
+    also any player it says is out, whichever player he is named as ("Kittle or Evans if
+    Evans is out?" started Evans; QA 26 October 2026)."""
     t = _Rows(*results.get("Next matchup", ([], [])))
     out = {name: f"is on bye in week {week}" for name, week in on_bye(results).items()}
     statuses = zip(t.text("player"), t.text("game_week"), t.text("report_status"), t.text("report_primary_injury"),
@@ -1641,6 +1648,8 @@ def unavailable(results: dict[str, tuple[list[str], list[list]]]) -> dict[str, s
             out[name] = f"is listed Out for week {week}" + (f" ({injury.lower()})" if injury else "")
         elif roster in UNAVAILABLE_ROSTER:
             out[name] = UNAVAILABLE_ROSTER[roster]
+        elif question and says_out(question, name):
+            out[name] = QUESTION_OUT
     return out
 
 
@@ -1745,7 +1754,7 @@ def rule_verdict(
     if question_type == "unsupported":
         topic = unsupported_topic(question) or "this question"
         if players and len(players) >= 2:
-            verdict, rule = compare_verdict(players, results)
+            verdict, rule = compare_verdict(players, results, question)
             verdict = f"{unsupported_message(topic)} For week {_week(results)} only: {verdict[:1].lower()}{verdict[1:]}"
             return verdict, _with_matchup(f"{why} {rule}", results)
         verdict, why = rule_verdict("start_sit", player, results, ranked)
@@ -1753,7 +1762,7 @@ def rule_verdict(
     if question_type == "status":
         return status_verdict(player, results, question)
     if question_type == "compare" and players and len(players) >= 2:
-        verdict, rule = compare_verdict(players, results)
+        verdict, rule = compare_verdict(players, results, question)
         if favours is not None and verdict.startswith("Start "):
             why = _backing(verdict.removeprefix("Start ").split(" over ")[0], ranked, favours, ruled_out)
         why += f" {rule}"
