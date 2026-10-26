@@ -51,6 +51,8 @@
     "compare",
     "start_sit",
     "waiver",
+    "status",
+    "unsupported",
     "other"
   ],
   "features": {

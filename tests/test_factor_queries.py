@@ -147,7 +147,8 @@ def test_summaries_do_the_arithmetic(real_sample):
     assert "Pass rate 76.2% in losses vs 63.2% in wins or ties." in lines["Team pass rate and game script"]
     assert "11.2 yards per target" in lines["Big plays"] and "10 plays of 20+ yards" in lines["Big plays"]
     assert "6 touchdowns = 36 of 118.8 PPR points (30.3%)" in lines["Touchdowns and red zone"]
-    assert "16 PPR per game vs top-10 soft defenses (2 games)" in lines["Matchups"]
+    # Opponents ranked without Watson's own points (QA, 26 Oct): one soft defense, not two.
+    assert "9.4 PPR per game vs top-10 soft defenses (1 game), 21.9 vs the rest (5 games)" in lines["Matchups"]
 
 
 def test_summaries_handle_empty_and_single_rows():
@@ -158,7 +159,7 @@ def test_summaries_handle_empty_and_single_rows():
         ["week", "snap_pct", "targets", "target_share_pct", "ppr_points"],
         [["1", "80.0", "8", "20.0", "12.5"]],
     )
-    assert one[0].startswith("1 games, 8 targets") and len(one) == 2  # no early/late split
+    assert one[0].startswith("1 game, 8 targets") and len(one) == 2  # no early/late split
 
 
 def test_summary_numbers_have_at_most_one_decimal(real_sample):
@@ -186,10 +187,12 @@ def test_rule_ratings_on_sample_data(real_sample):
     assert ratings["Big plays"][0] == "strong"  # 11.2 yards per target
     assert ratings["Touchdowns and red zone"][0] == "moderate"  # 30.3% of PPR from TDs
     assert ratings["Matchups"][0] == "not supported"  # 16 vs soft, 21.7 vs the rest
-    # Absence weeks 3, 5, 6: 21.4 PPR per game vs 18.2 in weeks 1, 2, 4.
+    # Absence weeks 3, 5, 6: 21.4 PPR per game vs 18.2 in weeks 1, 2, 4, but his target share
+    # was lower in those weeks (21.8% vs 22.6%), so the absences did not raise his usage.
     assert ratings["Teammate absences"] == (
-        "moderate",
-        "PPR per game in weeks with a teammate out minus other weeks: 3.2 (strong >= 5, moderate >= 2, weak > 0)",
+        "weak",
+        "PPR per game in weeks with a teammate out minus other weeks: 3.2 (strong >= 5, moderate >= 2, weak > 0); "
+        "capped at weak: target share -0.8 points in those weeks (it must rise)",
     )
     assert all(r[0] in ("strong", "moderate", "weak", "not supported") and r[1] for r in ratings.values())
 

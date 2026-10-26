@@ -259,3 +259,37 @@ def test_ui_script_handles_failures_and_sample_mode():
     assert "unreachable(run)" in js                  # the card no longer says RUNNING forever
     assert 'modelConfigured || c.status !== "error"' in js  # no wall of "error" timings without a model
     assert '"Sample data query"' in js               # sample mode does not claim Zetaris
+
+
+# --- "why" factors ---
+
+
+def test_a_qb_is_rated_on_his_passing(no_model):
+    # Before: "0 targets ... average target share 0%" and "Not supported: Opportunity, Big plays".
+    answer = ask("Why is Bryce Young scoring so many points?").result.answer
+    assert "Opportunity (strong): 5 games, 40.2 pass attempts per game" in answer
+    assert "1549 passing yards on 201 attempts (7.7 yards per attempt)" in answer
+    assert "target share 0%" not in answer and "0 targets" not in answer
+
+
+def test_matchups_rank_opponents_without_the_players_own_points(real_sample):
+    from app.adapters.zetaris import run_sql
+    from app.agents import factor_queries as fq
+
+    question = "Jaxon Smith-Njigba"
+    [jsn] = fq.parse_players(run_sql(fq.lookup_sql(fq.name_candidates(question), 2026))["data"], question)
+    [q] = [q for q in fq.why_bundle(jsn, 2026) if q.factor == "Matchups"]
+    result = run_sql(q.sql)
+    t = fq._Rows(result["headers"], result["data"])
+    ranks = dict(zip(t.text("opponent_team"), t.col("allowed_rank")))
+    assert ranks["ARI"] > 10 and ranks["WAS"] > 10  # 10 and 8 with his 42.5 and 35.4 points counted
+
+
+def test_an_absence_that_did_not_raise_his_usage_is_weak(no_model):
+    answer = ask("Why is Isaiah Likely scoring so much?").result.answer
+    assert "Teammate absences (strong)" not in answer
+
+
+def test_counts_of_one_are_singular(no_model):
+    answer = ask("Why is Christian Watson scoring so many fantasy points this season?").result.answer
+    assert "(1 games)" not in answer and "1 losses" not in answer

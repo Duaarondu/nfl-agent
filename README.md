@@ -36,6 +36,11 @@ curl -X POST http://localhost:8000/run -H "Content-Type: application/json" \
   -d '{"question": "Should I start Jared Goff this week?"}'
 ```
 
+Sample-mode answers come from the code rules, so their wording differs from the live,
+model-written runs in [Examples](#examples). To watch the Critic block a saved answer and
+send it back for revision with no credentials, run `python scripts/demo_critic.py` (it saves
+the run under `examples/critic-demo-*`).
+
 One question per type:
 
 | Type | Question |
@@ -136,7 +141,9 @@ and the reply says which steps a model produced and which the rules produced.
 | `replacement` | "Who becomes the Bucs' WR1 if Mike Evans is out?" | Status, team usage, depth chart, games without the player. The stand-in is a player at the same position ranked below him on the depth chart who can play (not Out or on reserve), ranked by carries for RBs, by depth for QBs and by recent target share for WRs and TEs |
 | `compare` | "I have Jameson Williams on my bench and George Pickens in my lineup, who should I pick?" | Both players, head to head: weekly opportunity, team usage share, recent trend (weeks 1-3 vs 4-6), touchdown share, next opponent's points allowed to the position. Verdict: "Start A over B" |
 | `start_sit` | "Should I start Christian Watson this week?" | Status, team usage, depth chart |
-| `waiver` | "Should I pick up Jauan Jennings?" | Status, team usage, depth chart |
+| `waiver` | "Should I pick up Jauan Jennings?" | Status, team usage, depth chart, next matchup. A player who can't play this week is "Hold off" |
+| `status` | "Is Kyle Monangai playing this week?" | The injury report and roster status. Week 7 game statuses exist only for the Thursday game, so a player listed Out in week 6 who did not practice for week 7 is "likely out" |
+| `unsupported` | "Should I trade Malik Nabers for Davante Adams?" | Says what it can't evaluate (trades, FAAB, streaming, kickers, defenses), then gives the named players' week 7 numbers |
 
 **Premise correction.** If the question names the wrong team, the agents correct it
 from the rosters table before answering. In the 2026 data, Mike Evans is on the 49ers,
@@ -161,6 +168,13 @@ user's league, using the Meterless H-MEM engine:
 ```bash
 docker build -t nfl-agent .
 docker run -p 8000:8000 -p 8080:8080 nfl-agent
+```
+
+Ports 8000 or 8080 taken? Map others, and tell the UI where the API is:
+
+```bash
+docker run -p 8200:8000 -p 8280:8080 -e UI_ORIGINS=http://localhost:8280 nfl-agent
+# then open http://localhost:8280/?api=http://localhost:8200
 ```
 
 Open <http://localhost:8080>. With no env file the container uses **sample mode**:
@@ -278,7 +292,7 @@ With the venv active (or with `.venv/bin/python` in place of `python`):
 ```bash
 python run.py "Why is Christian Watson scoring so many fantasy points this season?"
 python run.py "Who should I start, Jameson Williams or George Pickens?" --user demo
-python scripts/try_pipeline.py --live "question"   # live run, saved under examples/
+python scripts/try_pipeline.py --live "question"   # live run (needs .env), saved under examples/
 ```
 
 ### Traces

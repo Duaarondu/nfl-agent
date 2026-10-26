@@ -648,6 +648,7 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
             "SELECT ps.week, ps.opponent_team, sc.offense_snaps, "
             "ROUND(100 * sc.offense_pct, 1) AS snap_pct, ps.targets, "
             "ROUND(100 * ps.target_share, 1) AS target_share_pct, ps.receptions, ps.carries, "
+            "ps.attempts AS pass_attempts, "
             f"ROUND({s.expr('ps.')}, 1) AS {s.key}_points "
             "FROM NFLVERSE.player_stats ps "
             # Snap counts by PFR ID through the rosters, by name only without one (QA, 26 October
@@ -683,7 +684,7 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
         PlannedQuery(
             "Big plays",
             f"{p.name}: air yards, yards per target and 20+ yard plays by week",
-            "SELECT ps.week, ps.targets, ps.receiving_yards, "
+            "SELECT ps.week, ps.targets, ps.receiving_yards, ps.attempts AS pass_attempts, ps.passing_yards, "
             "ROUND(ps.receiving_air_yards, 1) AS air_yards, "
             "ROUND(100 * ps.air_yards_share, 1) AS air_yards_share_pct, "
             "ROUND(ps.receiving_yards / NULLIF(ps.targets, 0), 1) AS yards_per_target, "
@@ -692,7 +693,7 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
             "SELECT game_id, SUM(CASE WHEN yards_gained >= 20 THEN 1 ELSE 0 END) AS plays_20_plus, "
             "MAX(yards_gained) AS longest_play FROM NFLVERSE.pbp "
             f"WHERE season = {season} AND play_type IN ('pass', 'run') "
-            f"AND (receiver_player_id = {pid} OR rusher_player_id = {pid}) GROUP BY game_id"
+            f"AND (receiver_player_id = {pid} OR rusher_player_id = {pid} OR passer_player_id = {pid}) GROUP BY game_id"
             ") b ON b.game_id = ps.game_id "
             f"WHERE ps.season = {season} AND ps.player_id = {pid} ORDER BY ps.week",
         ),
@@ -716,10 +717,12 @@ def why_bundle(p: Player, season: int, s: Scoring = PPR) -> list[PlannedQuery]:
         PlannedQuery(
             "Matchups",
             f"{p.name}: {s.label} points by opponent, and each opponent's average {s.label} points allowed to {pos}s "
-            "(rank 1 = most allowed)",
+            "other than him (rank 1 = most allowed)",
             f"WITH allowed AS (SELECT opponent_team, week, SUM({s.expr()}) AS pts "
+            # Without his own points: they made his opponents look soft (QA, 26 October 2026:
+            # JSN's two "top-10 soft" defenses rank 24 and 19 without him).
             f"FROM NFLVERSE.player_stats WHERE season = {season} AND position = {_quote(pos)} "
-            "GROUP BY opponent_team, week), "
+            f"AND player_id <> {pid} GROUP BY opponent_team, week), "
             f"avg_allowed AS (SELECT opponent_team, ROUND(AVG(pts), 1) AS avg_{s.key}_allowed "
             "FROM allowed GROUP BY opponent_team), "
             f"ranked AS (SELECT opponent_team, avg_{s.key}_allowed, "
@@ -982,6 +985,11 @@ def _pct(part: float, whole: float) -> float | None:
     return round(100 * part / whole, 1) if whole else None
 
 
+def _count(n: float | None, word: str, many: str | None = None) -> str:
+    """"1 game", "5 games", "1 loss" (QA: "1 touchdowns", "1 losses", "5 in 1 games")."""
+    return f"{_fmt(n)} {word if n == 1 else (many or word + 's')}"
+
+
 class _Rows:
     def __init__(self, headers: list[str], rows: list[list]) -> None:
         self.headers, self.rows = headers, rows
@@ -1037,14 +1045,29 @@ def _status(t: _Rows) -> list[str]:
     return [f"Latest injury report: week {week}, {status}{f' ({injury})' if injury else ''}; {practice}."]
 
 
+def _passer(t: _Rows) -> bool:
+    """A QB's rows: he throws, so his volume is pass attempts, not targets (QA run: Bryce Young
+    was "Not supported: Opportunity" on 0 targets)."""
+    return (_avg(t.col("pass_attempts")) or 0) >= 10
+
+
 def _opportunity(t: _Rows) -> list[str]:
+    if _passer(t):
+        carries = _total(t.col("carries"))
+        return [
+            f"{_count(len(t.rows), 'game')}, {_fmt(_avg(t.col('pass_attempts')))} pass attempts per game, "
+            f"{_fmt(carries)} carries, average snap share {_fmt(_avg(t.col('snap_pct')))}%, "
+            f"{_fmt(_avg(t.col(t.points)))} {t.scoring.label} points per game.",
+            t.early_late("pass_attempts", "Pass attempts per game"),
+            t.early_late(t.points, f"{t.scoring.label} points per game"),
+        ]
     share, weeks = t.col("target_share_pct"), t.text("week")
     best = max(range(len(share)), key=lambda i: -1 if share[i] is None else share[i])
     carries = _total(t.col("carries"))
     runs = (f", {_fmt(carries)} carries ({_fmt(carries / len(t.rows))} per game)"
             if carries and carries / len(t.rows) >= MIN_CARRIES else "")
     return [
-        f"{len(t.rows)} games, {_fmt(_total(t.col('targets')))} targets{runs}, average snap share "
+        f"{_count(len(t.rows), 'game')}, {_count(_total(t.col('targets')), 'target')}{runs}, average snap share "
         f"{_fmt(_avg(t.col('snap_pct')))}%, average target share {_fmt(_avg(share))}%, "
         f"{_fmt(_avg(t.col(t.points)))} {t.scoring.label} points per game.",
         f"Highest target share: week {weeks[best]} ({_fmt(share[best])}%).",
@@ -1066,7 +1089,8 @@ def _pass_rate(t: _Rows) -> list[str]:
     losses = [r for r, m in zip(rate, margin) if m is not None and m < 0]
     others = [r for r, m in zip(rate, margin) if m is not None and m >= 0]
     return [
-        f"Average pass rate {_fmt(_avg(rate))}%; {len(losses)} losses, {len(others)} wins or ties.",
+        f"Average pass rate {_fmt(_avg(rate))}%; {_count(len(losses), 'loss', 'losses')}, "
+        f"{_count(len(others), 'win or tie', 'wins or ties')}.",
         f"Pass rate {_fmt(_avg(losses))}% in losses vs {_fmt(_avg(others))}% in wins or ties."
         if losses and others else None,
         t.early_late("pass_rate_pct", "Pass rate", "%"),
@@ -1076,6 +1100,13 @@ def _pass_rate(t: _Rows) -> list[str]:
 def _big_plays(t: _Rows) -> list[str]:
     targets, yards = _total(t.col("targets")), _total(t.col("receiving_yards"))
     longest = max((x for x in t.col("longest_play") if x is not None), default=None)
+    if _passer(t):
+        attempts, passing = _total(t.col("pass_attempts")), _total(t.col("passing_yards"))
+        return [
+            f"{_fmt(passing)} passing yards on {_fmt(attempts)} attempts "
+            f"({_fmt(round(passing / attempts, 1) if attempts else None)} yards per attempt); "
+            f"{_fmt(_total(t.col('plays_20_plus')))} plays of 20+ yards; longest {_fmt(longest)}.",
+        ]
     return [
         f"{_fmt(yards)} receiving yards on {_fmt(targets)} targets "
         f"({_fmt(round(yards / targets, 1) if targets else None)} yards per target); "
@@ -1092,7 +1123,7 @@ def _touchdowns(t: _Rows) -> list[str]:
     rz, team_rz = _total(t.col("rz_targets")), _total(t.col("team_rz_targets"))
     weeks = [w for w, a, b, c in zip(t.text("week"), rec, rush, passing) if (a or 0) + (b or 0) + (c or 0) > 0]
     return [
-        f"{_fmt(_total(rec) + _total(rush) + _total(passing))} touchdowns = {_fmt(td_points)} of {_fmt(ppr)} {t.scoring.label} points "
+        f"{_count(_total(rec) + _total(rush) + _total(passing), 'touchdown')} = {_fmt(td_points)} of {_fmt(ppr)} {t.scoring.label} points "
         f"({_fmt(_pct(td_points, ppr))}%). Scored in weeks: {', '.join(weeks) or 'none'}.",
         f"{_fmt(rz)} of the team's {_fmt(team_rz)} red-zone targets ({_fmt(_pct(rz, team_rz))}%); "
         f"{_fmt(_total(t.col('rz_carries')))} red-zone carries.",
@@ -1105,8 +1136,8 @@ def _matchups(t: _Rows) -> list[str]:
     rest = [p for r, p in zip(ranks, ppr) if r is not None and r > 10]
     return [
         f"Average opponent rank in {label} points allowed to the position: {_fmt(_avg(ranks))} of 32 (1 = most allowed).",
-        f"{_fmt(_avg(soft))} {label} per game vs top-10 soft defenses ({len(soft)} games), "
-        f"{_fmt(_avg(rest))} vs the rest ({len(rest)} games).",
+        f"{_fmt(_avg(soft))} {label} per game vs top-10 soft defenses ({_count(len(soft), 'game')}), "
+        f"{_fmt(_avg(rest))} vs the rest ({_count(len(rest), 'game')}).",
     ]
 
 
@@ -1118,7 +1149,7 @@ def _team_usage(t: _Rows) -> list[str]:
     rbs = [i for i in range(len(t.rows)) if pos[i] == "RB" and carries[i] and games[i]]
     if rbs:
         lines.append("RB carries: " + "; ".join(
-            f"{names[i]} {_fmt(carries[i])} in {_fmt(games[i])} games ({_fmt(round(carries[i] / games[i], 1))} per game)"
+            f"{names[i]} {_fmt(carries[i])} in {_count(games[i], 'game')} ({_fmt(round(carries[i] / games[i], 1))} per game)"
             for i in sorted(rbs, key=lambda i: -carries[i])[:6]) + ".")
     return lines
 
@@ -1162,7 +1193,7 @@ def _h2h_opportunity(t: _Rows) -> list[str]:
                    f"{_fmt(_avg((targets[i] or 0) + (carries[i] or 0) for i in idx))} touches per game)"
                    if runs and runs >= MIN_CARRIES else "")
         lines.append(
-            f"{name}: {len(idx)} games, {_fmt(_total(targets[i] for i in idx))} targets "
+            f"{name}: {_count(len(idx), 'game')}, {_count(_total(targets[i] for i in idx), 'target')} "
             f"({_fmt(_avg(targets[i] for i in idx))} per game){rushing}, average snap share {_fmt(_avg(snap[i] for i in idx))}%, "
             f"average target share {_fmt(_avg(share[i] for i in idx))}%, "
             f"{_fmt(_avg(pts[i] for i in idx))} {t.scoring.label} points per game."
@@ -1177,7 +1208,7 @@ def _h2h_usage(t: _Rows) -> list[str]:
     per_game = t.col(f"{t.scoring.key}_per_game")
     return [
         f"{name} ({team}): average target share {_fmt(share)}%, average air yards share {_fmt(air)}%, "
-        f"{_fmt(targets)} targets and {_fmt(carries)} carries in {_fmt(games)} games, "
+        f"{_count(targets, 'target')} and {_count(carries, 'carry', 'carries')} in {_count(games, 'game')}, "
         f"{_fmt(ppg)} {t.scoring.label} points per game."
         for name, team, share, air, targets, carries, games, ppg in zip(
             t.text("player"), t.text("team"), t.col("avg_target_share_pct"), t.col("avg_air_yards_share_pct"),
@@ -1322,7 +1353,7 @@ _SUMMARIES = {
     "Matchups": _matchups,
     "Team usage": _team_usage,
     "Points per game": lambda t: [
-        f"{n} ({pos}): {_fmt(g)} games, {_fmt(pt)} passing and {_fmt(rt)} rushing touchdowns, "
+        f"{n} ({pos}): {_count(g, 'game')}, {_fmt(pt)} passing and {_fmt(rt)} rushing touchdowns, "
         f"{_fmt(v)} {t.scoring.label} points per game." for n, pos, g, pt, rt, v in zip(
             t.text("player_display_name"), t.text("position"), t.col("games"), t.col("passing_tds"),
             t.col("rushing_tds"), t.col(f"{t.scoring.key}_per_game"))],
@@ -1392,6 +1423,13 @@ def rule_rating(
     if not rows and factor != "Teammate absences":
         return "not supported", "no rows"
 
+    if factor == "Opportunity" and _passer(t):
+        attempts = _avg(t.col("pass_attempts"))
+        return _grade(attempts, 35, 30, 22), f"{_fmt(attempts)} pass attempts per game (strong >= 35, moderate >= 30, weak >= 22)"
+    if factor == "Big plays" and _passer(t):
+        attempts, passing = _total(t.col("pass_attempts")), _total(t.col("passing_yards"))
+        ypa = round(passing / attempts, 1) if attempts else None
+        return _grade(ypa, 8.5, 7.5, 6.5), f"{_fmt(ypa)} yards per pass attempt (strong >= 8.5, moderate >= 7.5, weak >= 6.5)"
     if factor == "Opportunity":
         share, snap = _avg(t.col("target_share_pct")), _avg(t.col("snap_pct"))
         support = _grade(share, 22, 15, 10)
@@ -1405,8 +1443,19 @@ def rule_rating(
             rule += f"; carries per game {_fmt(carries)} (strong >= 15, moderate >= {_fmt(PICKUP_CARRIES)}, weak >= {_fmt(MIN_CARRIES)})"
         return support, rule
     if factor == "Teammate absences":
-        gain = _split_gain(ppr, set(t.text("week")))
-        return _grade(gain, 5, 2, 0.1), f"{label} per game in weeks with a teammate out minus other weeks: {_fmt(gain)} (strong >= 5, moderate >= 2, weak > 0)"
+        weeks = set(t.text("week"))
+        gain = _split_gain(ppr, weeks)
+        support = _grade(gain, 5, 2, 0.1)
+        rule = f"{label} per game in weeks with a teammate out minus other weeks: {_fmt(gain)} (strong >= 5, moderate >= 2, weak > 0)"
+        # More points is not more usage: his target share must rise too, or the absence did not
+        # cause it (QA run: Isaiah Likely "strong" on a week his share fell, after his jump began).
+        o = _Rows(*results.get("Opportunity", ([], [])))
+        share = {w: v for w, v in zip(o.text("week"), o.col("target_share_pct")) if v is not None}
+        share_gain = _split_gain(share, weeks) if not _passer(o) else None
+        if share_gain is not None and share_gain <= 0 and support in ("strong", "moderate"):
+            support = "weak"
+            rule += f"; capped at weak: target share {_fmt(share_gain)} points in those weeks (it must rise)"
+        return support, rule
     if factor == "Team pass rate and game script":
         rate = dict(zip(t.text("week"), t.col("pass_rate_pct")))
         mean = _avg(rate.values())
