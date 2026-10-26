@@ -298,6 +298,19 @@ def check_verdict_support(result: AnalystResult) -> list[Issue]:
     return issues
 
 
+STAND_IN_MARGIN = 0.5  # a confident stand-in pick may trail the pool's leader by at most this
+
+
+def _leader_doubt_stated(leader: str, results, answer: str) -> bool:
+    """The leader is listed Questionable or Doubtful for the target week and the answer says so."""
+    d = factor_queries._Rows(*results.get("Depth chart", ([], [])))
+    status = next((s for n, s in zip(d.text("player_name"), d.text("report_status")) if same_player(n, leader)), "")
+    status = (status or "").lower()
+    if status not in ("questionable", "doubtful"):
+        return False
+    return any(status in s.lower() and mentioned(leader, s) for s in factor_queries.sentences(answer))
+
+
 def _stand_in_support(result: AnalystResult, verdict: str, name: str, results) -> list[Issue]:
     """A stand-in must be one of factor_queries.stand_in_pool: his position, below him on
     the depth chart, able to play; a confident pick far behind the pool's leader is blocked."""
@@ -316,8 +329,11 @@ def _stand_in_support(result: AnalystResult, verdict: str, name: str, results) -
     top, top_value, what = pool[0]
     action = _action(verdict) or ""
     unit = "%" if "share" in what else f" {what}"
+    # A confident pick that trails the leader by more than STAND_IN_MARGIN is blocked, even if the
+    # answer names the leader; only a leader listed Questionable or Doubtful, said so, excuses it.
     if action in CONFIDENT_ACTIONS and not same_player(top, name) and top_value is not None \
-            and (mine[1] is None or mine[1] < top_value / 2) and not mentioned(top, result.answer):
+            and (mine[1] is None or top_value - mine[1] > STAND_IN_MARGIN) \
+            and not _leader_doubt_stated(top, results, result.answer):
         return [Issue("verdict_support", "answer", verdict,
                       f"{top} has the most {what} among the {subject.position}s below {subject.name} "
                       f"({_fmt(top_value)}{unit}), against {mine[0]}'s {_fmt(mine[1])}{unit}: recommend {top}.")]

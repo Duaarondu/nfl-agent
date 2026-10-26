@@ -110,15 +110,31 @@ def test_confident_action_under_half_the_top_share_is_blocked(answer):
                             "against Jacob Cowing's 3.7%: recommend Deebo Samuel.")
 
 
-def test_weaker_action_closer_share_or_naming_the_leader_passes():
-    # Stash is not a confident action; Cooks' 7.2% is more than half of Samuel's 11.1%;
-    # an answer that names Samuel has weighed him.
-    for answer in (
-        "Stash Jacob Cowing. He is a WR.",
-        "Pick up Brandin Cooks. He is a WR.",
-        "Pick up Jacob Cowing. Deebo Samuel sees more targets.",
-    ):
-        assert not issues(with_answer(BUCS, answer), "verdict_support"), answer
+def test_a_weaker_action_passes():
+    assert not issues(with_answer(BUCS, "Stash Jacob Cowing. He is a WR."), "verdict_support")
+
+
+@pytest.mark.parametrize("answer", [
+    "Pick up Jacob Cowing. Deebo Samuel sees more targets.",  # naming the leader no longer excuses it
+    "Pick up Brandin Cooks. He is a WR.",  # 7.2% trails Samuel's 11.1% by more than 0.5
+])
+def test_a_confident_pick_behind_the_leader_is_blocked(answer):
+    [issue] = issues(with_answer(BUCS, answer), "verdict_support")
+    assert issue.blocking and issue.reason.endswith("recommend Deebo Samuel.")
+
+
+def _samuel_listed(status):
+    result = with_answer(BUCS, "Pick up Jacob Cowing. Deebo Samuel is questionable for week 7 (hamstring).")
+    depth = next(q for q in result.queries if q.factor == "Depth chart")
+    depth.headers = [*depth.headers, "roster_status", "report_status"]
+    depth.rows = [[*r, "ACT", status if "Samuel" in str(r) else None] for r in depth.rows]
+    return result
+
+
+def test_a_questionable_leader_said_so_excuses_the_pick():
+    assert not issues(_samuel_listed("Questionable"), "verdict_support")
+    # Not listed: the answer's claim does not excuse it.
+    assert issues(_samuel_listed(None), "verdict_support")
 
 
 def test_why_verdict_about_the_player_himself_is_not_compared():

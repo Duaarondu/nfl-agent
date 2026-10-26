@@ -80,6 +80,11 @@ def model(monkeypatch):
     stub = Stub()
     monkeypatch.setattr(analyst.meterless, "chat", stub.chat)
     monkeypatch.delenv("ANALYST_FREE_SQL", raising=False)
+    # Dummy settings so meterless.configured() is true and the stub is called: a clean
+    # clone (CI) has no .env. The no_model fixture removes them again.
+    for name, value in (("METERLESS_BASE_URL", "http://stub.invalid/v1"), ("METERLESS_RUNTIME_TOKEN", "stub-token"),
+                        ("METERLESS_MODEL", "stub-model")):
+        monkeypatch.setenv(name, value)
     yield stub
     # Factor agents left running past their window must finish before tracing is unpatched.
     for thread in threading.enumerate():
