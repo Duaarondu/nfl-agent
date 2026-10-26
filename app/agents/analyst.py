@@ -1196,6 +1196,8 @@ def _last_names(
           rules={n.word: n.rule for n in plan.last_names},
           unresolved={n.word: [p.name for p, _ in n.options] for n in names if not n.player})
     unresolved = [n for n in names if not n.player]
+    if not any(c.isupper() for c in question):  # lowercase words tried as names: no match is no name
+        unresolved = [n for n in unresolved if n.options]
     if unresolved and ((choice and len(found) < 2) or not found):
         message = factor_queries.clarify_message(unresolved)
         trace(run_id, AGENT_NAME, "clarify", "ok", message=message)

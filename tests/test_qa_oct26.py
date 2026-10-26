@@ -326,3 +326,12 @@ def test_a_non_skill_player_gets_a_clear_reply(no_model, question, reply):
     from app.agents.analyst import AnalystError
     with pytest.raises(AnalystError, match=reply.replace("(", r"\(").replace(")", r"\)")):
         ask(question)
+
+
+@pytest.mark.parametrize("question, player", [
+    ("should i start goff", "Jared Goff"), ("is gibbs playing", "Jahmyr Gibbs"),
+    ("mccaffrey is out who replaces him", "Christian McCaffrey"),
+    ("who becomes the bucs wr1 if evans is out", "Mike Evans"),
+])
+def test_an_all_lowercase_question_finds_the_last_name(no_model, question, player):
+    assert ask(question).result.player.name == player  # before: the generic 422

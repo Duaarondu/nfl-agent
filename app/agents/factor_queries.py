@@ -436,7 +436,10 @@ def last_name_words(question: str, found: list[Player]) -> list[str]:
             continue  # part of a full name ("Nobody Atall"): the full-name lookup's job
         prev = tokens[i - 1].lower() if i else ""
         nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
-        if (word[:1].isupper() or prev in CHOICE_WORDS or nxt in CHOICE_WORDS) and low not in {
+        # An all-lowercase question ("should i start goff") has no capitals to go by: any
+        # longer word may be a last name; words that match nobody are dropped later (QA, 26 Oct).
+        lowercase = not any(c.isupper() for c in text) and len(low) >= 4
+        if (word[:1].isupper() or prev in CHOICE_WORDS or nxt in CHOICE_WORDS or lowercase) and low not in {
                 w.lower() for w in words}:
             words.append(word)
     return words
