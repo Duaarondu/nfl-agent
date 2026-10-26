@@ -308,7 +308,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 545 tests
+pytest           # 612 tests
 ```
 
 The tests cover:
@@ -339,6 +339,10 @@ Docker image and runs it **with no env file**. In that container it checks:
 Live runs saved by `scripts/try_pipeline.py --live`. Each folder has `answer.md` (readable),
 `response.json` (the API reply), `result.json` and `trace.jsonl`. Older runs are in
 [`examples/archive/`](examples/archive/README.md).
+
+The Bucs/Evans runs below were saved before the 26 October injury-report fix: Deebo Samuel
+was listed Out for week 6 and did not practice for week 7, so a rerun now treats him as
+likely out and picks the next WR who can play.
 
 | Example | Data | Model vs rule-based steps | Result |
 |---|---|---|---|
@@ -418,8 +422,10 @@ NFLVERSE tables directly**, and no app code changed. Why is in the reflection.
   - **Exploratory queries:** 31 on the source tables.
   - **USL queries:** 5 against the model.
 - **What it found:** the foreign keys flagged 6 `player_stats` rows with no player ID.
-  The exploration showed that the app's name-based `snap_counts` join misses 104
-  skill-player rows. Deebo Samuel's snap share, for example, is lost in every game.
+  The exploration showed that the app's name-based `snap_counts` join missed 104
+  skill-player rows (Deebo Samuel's snap share was lost in every game). The 26 October
+  QA fixes now join snap counts by player ID through the rosters table, as the USL's
+  keys suggested.
 
 Files:
 - [use case and sources](docs/zetaris-usl/01-use-case-and-sources.md)
@@ -512,13 +518,14 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 - **Limited name matching.** About 20 common nicknames and first names ("CMC", "JSN",
   "Puka") are recognised from a fixed list. A misspelt name is not answered: the reply
   suggests the closest roster name ("Did you mean Justin Jefferson?").
-- **Snap-count joins match players by name.** As a result, about 5% of skill-player
-  snap rows are missed. For example, Deebo Samuel, listed as "Deebo Samuel Sr.", shows
-  no snap share. [docs/zetaris-usl/05-reflection.md](docs/zetaris-usl/05-reflection.md)
-  explains this, and how the USL's player-ID keys would fix it.
+- **Snap counts for players with no PFR ID.** Snap counts join by player ID through the
+  rosters table (fixed 26 October; before, the name-based join missed about 5% of rows,
+  see [docs/zetaris-usl/05-reflection.md](docs/zetaris-usl/05-reflection.md)). A
+  player whose roster row has no PFR ID still falls back to matching by name.
 - **Season 2026 only.** A question about another season is answered from 2026 data,
   without a warning.
-- **League memory keeps its top 15 records** per question.
+- **League memory's prompt block keeps its top 15 records** per question; the scoring,
+  team count and roster the code uses come from every live record.
 - **Trades, rest-of-season value, dynasty, FAAB bids, handcuffs and streaming are not
   supported.** The answer says so, then gives the named players' numbers for the week.
 - **Scoring variants.** TE premium, 6-point passing touchdowns and superflex are not
