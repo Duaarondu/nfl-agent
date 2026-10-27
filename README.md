@@ -72,29 +72,36 @@ numbers for the week. More in [Limitations](#limitations).
 ```mermaid
 flowchart TD
     UI["Web UI (port 8080)<br/>app/ui/"] -->|"POST /run, polls GET /trace/&lt;run_id&gt;"| API["API (port 8000)<br/>run.py"]
-    API --> MEM{"user_id set?"}
-    MEM -->|yes| HMEM[("League memory<br/>Meterless H-MEM engine<br/>app/engines/hmem.py")]
-    HMEM -->|"scoring, team count, roster"| P
-    MEM -->|no| P["Planner<br/>question type + player names"]
+    API --> P["Planner<br/>question type + player names"]
+    API -->|"user_id set"| ST
+    subgraph HM["Meterless H-MEM engine: league memory (app/engines/hmem.py, conformance 13/13)"]
+        direction LR
+        ST["Store<br/>league facts from the question:<br/>scoring, team count, roster, drops"] --> MEMDB[("Memory records<br/>per user_id")]
+        MEMDB --> RT["Retrieve<br/>ranked records for this run"]
+    end
     P --> A
-
+    RT -->|"scoring + roster"| A
+    RT -->|"roster + scoring"| C
     subgraph A["Analyst"]
         direction TB
-        Q["Player lookup + premise check<br/>planned factor queries"] --> F["Factor agents, in parallel<br/>one per factor: support (+ favours for compare)"]
+        Q["Player lookup + premise check<br/>planned factor queries<br/>(points in the league's scoring)"] --> F["Factor agents, in parallel<br/>one per factor"]
         F --> V["Verdict"]
     end
-
     Q <-->|"run_sql, one statement per call"| Z[("Zetaris<br/>NFLVERSE tables")]
+    Z -.-|"also modelled as"| USL[("Zetaris USL nfl_usl<br/>keys, FKs, DQ rules")]
     P -.->|model call| N
     F -.->|model calls| N
     V -.->|model call| N
     C -.->|model review| N
     N["Meterless Nightshift runtime<br/>NVIDIA Nemotron 3.5 Lightning"]
-
-    V --> C["Critic<br/>code checks + model review"]
+    V --> C["Critic<br/>code checks + model review<br/>(never picks up a rostered player)"]
     C -->|"needs_revision<br/>(max 3 rounds)"| R["Analyst revises the verdict"]
     R --> C
     C -->|approved| OUT["Answer + claims + SQL + critic rounds + trace"]
+    classDef meterless fill:#efe7ff,stroke:#7c4dff,color:#1a1a1a;
+    classDef zetaris fill:#e6f0ff,stroke:#2f6fdf,color:#1a1a1a;
+    class ST,MEMDB,RT,N meterless;
+    class Z,USL zetaris;
 ```
 
 Every model call goes through `app/adapters/meterless.py`, and every data query goes
