@@ -16,6 +16,10 @@ explanation holds up, and sends it back for revision if it doesn't.
 
 Every answer ends with: *Informational only, based on nflverse data; not betting advice.*
 
+## Demo Video
+
+Demo video: https://youtu.be/K_tY7Z2Y3GQ
+
 ## Try it in 60 seconds
 
 Sample mode needs no credentials: the committed data sample, and code rules for every
@@ -27,6 +31,14 @@ docker build -t nfl-agent . && docker run -p 8000:8000 -p 8080:8080 nfl-agent
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python run.py
+```
+
+On Windows PowerShell (5.1 has no `&&`), run the steps one per line:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python run.py
 ```
 
 Then open <http://localhost:8080>, or ask the API:
