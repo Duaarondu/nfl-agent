@@ -386,6 +386,35 @@ The longer version is in [docs/sponsor-technology.md](docs/sponsor-technology.md
   #help-desk confirmed it isn't required on 25 October; the project was built in
   Claude Code.
 
+### Zetaris Unified Semantic Layer
+
+[docs/zetaris-usl/](docs/zetaris-usl/) has a five-table USL model, `nfl_usl`, over the
+NFLVERSE tables. It is built alongside the app: **the app's agents still query the
+NFLVERSE tables directly**, and no app code changed. Why is in the reflection.
+
+- **Model:**
+  - **Tables and keys:** `team`, `player`, `game`, `player_week` and `injury_report`,
+    with primary keys and six foreign keys.
+  - **Descriptions** for the model and every table.
+  - **Rules:** three custom DQ rules, `target_share_range`, `gsis_id_format` and
+    `report_status_known`.
+- **Live results:** everything ran through the same Zetaris route as the app, and the
+  results are pasted as returned.
+  - **The build:** compile, activate, `RUN DQ` and `SHOW DQ`.
+  - **Exploratory queries:** 31 on the source tables.
+  - **USL queries:** 5 against the model.
+- **What it found:** the foreign keys flagged 6 `player_stats` rows with no player ID.
+  The exploration showed that the app's name-based `snap_counts` join misses 104
+  skill-player rows. Deebo Samuel's snap share, for example, is lost in every game.
+
+Files:
+- [use case and sources](docs/zetaris-usl/01-use-case-and-sources.md)
+- [exploratory queries](docs/zetaris-usl/02-exploratory-queries.md)
+- [USL DDL](docs/zetaris-usl/03-nfl-usl.sql) and its [results](docs/zetaris-usl/03-nfl-usl-results.md)
+- [USL queries](docs/zetaris-usl/04-usl-queries.md)
+- [reflection](docs/zetaris-usl/05-reflection.md): time saved, where it helps and where
+  it doesn't, and a product requirement with mock DDL
+
 **What was unique:**
 - **The Critic tests timing.** "His target share rose after Jayden Reed got hurt" is
   checked week by week against the data. It's blocked if the rise doesn't start that

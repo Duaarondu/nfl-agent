@@ -69,6 +69,43 @@ against the live cluster:
   SQL when one exists in `data/sample/zetaris_cache/`. Otherwise it raises, and the
   Analyst records that query as failed.
 
+### Zetaris Unified Semantic Layer
+
+**Built alongside the app, not used by it.** A five-table USL model, `nfl_usl`, is
+active on the cluster at `lightning.metastore.nfl_usl_ns.nfl_usl`. It is built from the
+NFLVERSE tables and documented in [zetaris-usl/](zetaris-usl/README.md).
+- **Agents unchanged:** the app's agents still query `NFLVERSE.*` directly, and no app
+  code changed. The app was built and frozen before the USL work.
+- **Sample mode:** the DuckDB sample mode has no USL to read.
+
+**What is in it.** It follows Zetaris's examples in `zetaris/getting-started`
+(`open_data/usl/`).
+- **Tables and keys:** `team`, `player`, `game`, `player_week` and `injury_report`,
+  with primary keys and six foreign keys.
+- **Lifecycle:** model and table descriptions, `ACTIVATE` from the NFLVERSE tables
+  (with `COALESCE` on keys), three custom `REGISTER DQ` rules, and `RUN DQ` / `SHOW DQ`
+  results.
+- **One-request compile:** the multi-table `COMPILE USL` was sent as one request
+  through the app's own Zetaris route by a one-off runner
+  ([run_usl.py](zetaris-usl/run_usl.py)). `run_sql` accepts only one statement per call.
+
+**Files:**
+- [Use case and the seven sources](zetaris-usl/01-use-case-and-sources.md)
+- [Exploratory queries, live](zetaris-usl/02-exploratory-queries.md)
+- [USL DDL](zetaris-usl/03-nfl-usl.sql) and [its live results](zetaris-usl/03-nfl-usl-results.md)
+- [Queries against the USL, live](zetaris-usl/04-usl-queries.md)
+- [Reflection](zetaris-usl/05-reflection.md): time saved, where the USL helps and where
+  it doesn't, and a product requirement with mock DDL
+
+**What it found:**
+- **player_week:** the player FK flags 6 `player_stats` rows with no player ID (6,482 of
+  6,488 valid).
+- **player:** `gsis_id_format` flags 1 roster row with no GSIS ID.
+- **snap_counts:** the exploration showed that the app's name-based join to
+  `player_stats` matches 1,955 skill-player rows, where joining by ID matches 2,059.
+  Deebo Samuel ("Deebo Samuel Sr." in `player_stats`) loses his snap share in all five
+  games.
+
 ## Meterless
 
 ### Nightshift runtime: the only model provider
