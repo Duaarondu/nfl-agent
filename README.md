@@ -294,7 +294,7 @@ Every agent step writes one JSON line to stdout and to `logs/trace-<YYYYMMDD>.js
 ### Tests and CI
 
 ```bash
-pytest           # 528 tests
+pytest           # 545 tests
 ```
 
 The tests cover:
@@ -498,6 +498,10 @@ listed under Credits ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)).
 - **Limited name matching.** About 20 common nicknames and first names ("CMC", "JSN",
   "Puka") are recognised from a fixed list. A misspelt name is not answered: the reply
   suggests the closest roster name ("Did you mean Justin Jefferson?").
+- **Snap-count joins match players by name.** As a result, about 5% of skill-player
+  snap rows are missed. For example, Deebo Samuel, listed as "Deebo Samuel Sr.", shows
+  no snap share. [docs/zetaris-usl/05-reflection.md](docs/zetaris-usl/05-reflection.md)
+  explains this, and how the USL's player-ID keys would fix it.
 - **Season 2026 only.** A question about another season is answered from 2026 data,
   without a warning.
 - **League memory keeps its top 15 records** per question.
